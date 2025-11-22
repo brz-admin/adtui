@@ -1,20 +1,27 @@
+"""ADTUI - Active Directory Terminal UI - Refactored Version."""
+
 import configparser
 import os
+import getpass
+from typing import Optional
+
 from ldap3 import Server, Connection, ALL
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
 from textual.binding import Binding
-import getpass
-from functools import lru_cache
 
 from adtree import ADTree
+from widgets.details_pane import DetailsPane
+from services import LDAPService, HistoryService, PathService
+from commands import CommandHandler
+from ui.dialogs import ConfirmDeleteDialog, ConfirmMoveDialog, ConfirmRestoreDialog, ConfirmUndoDialog, CreateOUDialog
+from constants import Severity, MESSAGES
 
 # Load configuration
 config = configparser.ConfigParser()
 config.read('config.ini')
 
-# Configuration
 LDAP_SERVER = config['ldap']['server']
 DOMAIN = config['ldap']['domain']
 BASE_DN = config['ldap']['base_dn']
@@ -26,8 +33,20 @@ if os.path.exists(LAST_USER_FILE):
     with open(LAST_USER_FILE, 'r') as f:
         last_user = f.read().strip()
 
-def get_ldap_connection(username, password):
-    """Create and return an Active Directory connection using simple bind."""
+
+def get_ldap_connection(username: str, password: str) -> Connection:
+    """Create and return an Active Directory connection.
+    
+    Args:
+        username: AD username
+        password: AD password
+        
+    Returns:
+        Active LDAP connection
+        
+    Raises:
+        Exception: If connection fails
+    """
     bind_dn = f"{username}@{DOMAIN}"
     port = 636 if USE_SSL else 389
     server = Server(LDAP_SERVER, port=port, use_ssl=USE_SSL, get_info=ALL)
@@ -37,57 +56,21 @@ def get_ldap_connection(username, password):
         print(f"Failed to connect: {e}")
         raise
 
-@lru_cache(maxsize=100)
-def get_object_details(conn, dn):
-    """Get detailed attributes for an object (cached)."""
-    return
-    try:
-        conn.search(dn, '(objectClass=*)', attributes=['*'])
-        if conn.entries:
-            return conn.entries[0]
-    except Exception as e:
-        print(f"Error getting details for {dn}: {e}")
-    return None
-
-class DetailsPane(Static):
-    def update_content(self, item_label, dn=None, conn=None):
-        """Display details for the selected object."""
-        self.update("Detail pane")
-        if not item_label:
-            self.update("Select an item to view details.")
-            return
-        if not dn or not conn:
-            self.update(f"Details for: {item_label}\n\n[Select an object to view details]")
-            return
-        entry = get_object_details(conn, dn)
-        if not entry:
-            self.update(f"Details for: {item_label}\n\n[Could not load details]")
-            return
-        details = f"Details for: {item_label}\n\n"
-        try:
-            if hasattr(entry, 'entry_attributes'):
-                for attr, values in entry.entry_attributes.items():
-                    if attr != 'objectClass':
-                        details += f"{attr}: {', '.join(str(v) for v in values)}\n"
-            elif hasattr(entry, 'attributes'):
-                for attr in entry.attributes:
-                    if attr != 'objectClass':
-                        values = entry[attr].value
-                        if values:
-                            details += f"{attr}: {', '.join(str(v) for v in values)}\n"
-            else:
-                details += "[Basic details only]\n"
-                details += f"DN: {dn}\n"
-        except Exception as e:
-            details += f"Error getting details: {e}\n"
-        self.update(details)
 
 class SearchResultsPane(ListView):
+    """ListView for displaying search results."""
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.conn = None
 
     def populate(self, results, conn=None):
+        """Populate the search results pane.
+        
+        Args:
+            results: List of result dictionaries with 'label' and 'dn'
+            conn: Optional LDAP connection
+        """
         self.clear()
         self.conn = conn
         for result in results:
@@ -98,59 +81,57 @@ class SearchResultsPane(ListView):
 
 
 class ADTUI(App):
-    CSS = """
-    Screen {
-        layout: grid;
-        grid-columns: 1fr 1fr 1fr;
-        grid-rows: 1fr 3;
-    }
-    Horizontal {
-        width: 100%;
-    }
-    Horizontal > Vertical:first-child {
-        width: 30%;
-        border-right: heavy $background 80%;
-    }
-    Horizontal > Vertical:last-child {
-        width: 70%;
-        height: 100%;
-        layout: vertical;
-    }
+    """Main Active Directory TUI Application."""
     
-    #details-pane {
-        height: 70%;
-        border-bottom: heavy $background 80%;
-    }
-    Input {
-        dock: bottom;
-        height: 3;
-    }
-    #search-results-pane {
-        height: 30%;
-    }
-    """
+    CSS_PATH = "styles.tcss"
     BINDINGS = [
         Binding("escape", "quit", "Quit", show=True),
         Binding(":", "command_mode", "Command", show=True),
+        Binding("/", "search_mode", "Search", show=True),
         Binding("r", "refresh_ou", "Refresh OU", show=True),
-        Binding("s", "search", "Search", show=True),
-        Binding("t", "test_search", "test", show=True),
     ]
 
-    def action_test_search(self):
-        """Populate test search results."""
-        self.populate_test_search_results()
-
-    def __init__(self, username, password):
+    def __init__(self, username: str, password: str):
+        """Initialize the application.
+        
+        Args:
+            username: AD username
+            password: AD password
+        """
         super().__init__()
+        
+        # Establish connection
         self.conn = get_ldap_connection(username, password)
+        
+        # Initialize services
+        self.ldap_service = LDAPService(self.conn, BASE_DN)
+        self.history_service = HistoryService(max_size=50)
+        self.path_service = PathService(BASE_DN)
+        
+        # Initialize command handler
+        self.command_handler = CommandHandler(self)
+        
+        # Initialize widgets
         self.adtree = ADTree(self.conn, BASE_DN)
         self.details = DetailsPane(id="details-pane")
         self.search_results_pane = SearchResultsPane(id="search-results-pane")
+        
+        # State management
         self.command_mode = False
+        self.autocomplete_mode = False
         self.base_dn = BASE_DN
+        
+        # Current selection
+        self.current_selected_dn: Optional[str] = None
+        self.current_selected_label: Optional[str] = None
+        
+        # Pending operations
+        self.pending_delete_dn: Optional[str] = None
+        self.pending_move_dn: Optional[str] = None
+        self.pending_move_target: Optional[str] = None
 
     def compose(self) -> ComposeResult:
+        """Compose the UI layout."""
         with Horizontal():
             with Vertical():
                 yield self.adtree
@@ -161,91 +142,279 @@ class ADTUI(App):
         yield Footer()
 
     def on_mount(self):
-        self.query_one("#command-input", Input).visible = False
+        """Handle mount event."""
+        cmd_input = self.query_one("#command-input", Input)
+        cmd_input.visible = False
 
+    # ==================== Command Mode Actions ====================
+    
     def action_command_mode(self):
+        """Enter command mode with : prefix."""
         self.command_mode = True
         cmd_input = self.query_one("#command-input", Input)
-        cmd_input.value = ":"
         cmd_input.visible = True
         cmd_input.focus()
+        self.set_timer(0.01, lambda: self._set_input_prefix(":"))
+
+    def action_search_mode(self):
+        """Enter search mode with / prefix (vim-style)."""
+        self.command_mode = True
+        cmd_input = self.query_one("#command-input", Input)
+        cmd_input.placeholder = "Search..."
+        cmd_input.visible = True
+        cmd_input.focus()
+        self.set_timer(0.01, lambda: self._set_input_prefix("/"))
 
     def action_refresh_ou(self):
         """Refresh the currently selected OU."""
         self.adtree.refresh_current_ou()
 
-    def action_search(self):
-        """Open search input."""
-        self.action_command_mode()
+    def _set_input_prefix(self, prefix: str):
+        """Set the input prefix and move cursor to end."""
         cmd_input = self.query_one("#command-input", Input)
-        cmd_input.placeholder = "Search..."
-        cmd_input.value = "s "
+        cmd_input.value = prefix
+        cmd_input.cursor_position = len(prefix)
+
+    # ==================== Input Handling ====================
+
+    def on_input_changed(self, event: Input.Changed):
+        """Handle input changes for autocomplete."""
+        if self.command_mode and event.input.id == "command-input":
+            value = event.value
+            
+            if value.startswith(":m ") or value.startswith(":move "):
+                prefix_len = 3 if value.startswith(":m ") else 6
+                path_input = value[prefix_len:]
+                self.show_path_autocomplete(path_input)
+            elif self.autocomplete_mode:
+                self.autocomplete_mode = False
+                self.search_results_pane.clear()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        """Handle command submission."""
+        if self.command_mode:
+            cmd = event.value.strip()
+            
+            # Execute command via handler
+            self.command_handler.execute(cmd)
+            
+            # Cleanup
+            cmd_input = self.query_one("#command-input", Input)
+            cmd_input.value = ""
+            cmd_input.visible = False
+            self.command_mode = False
+            self.autocomplete_mode = False
+
+    # ==================== Selection Handlers ====================
 
     def on_tree_node_selected(self, event: Tree.NodeSelected):
-        """Show details when an object is selected."""
+        """Handle tree node selection."""
         node = event.node
+        self.current_selected_dn = node.data
+        self.current_selected_label = node.label
         self.details.update_content(node.label, node.data, self.conn)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted):
-        """Show details when a search result is selected."""
+        """Handle list view highlighting."""
         if event.list_view.id == "search-results-pane":
             item = event.item
+            self.current_selected_dn = item.data
+            self.current_selected_label = item.text
             self.details.update_content(item.text, item.data, self.conn)
 
-    def on_input_submitted(self, event: Input.Submitted):
-        """Handle command/search input."""
-        if self.command_mode:
-            cmd = event.value.strip()
-            if cmd.startswith("s "):
-                query = cmd[2:]
-                self.search_ad(query)
-            self.query_one("#command-input", Input).visible = False
-            self.command_mode = False
+    def on_list_view_selected(self, event: ListView.Selected):
+        """Handle autocomplete selection."""
+        if self.autocomplete_mode and event.list_view.id == "search-results-pane":
+            item = event.item
+            if hasattr(item, 'data'):
+                label = item.text
+                if '📁' in label:
+                    path = label.replace('📁 ', '').strip()
+                    cmd_input = self.query_one("#command-input", Input)
+                    cmd_input.value = f":m {path}/"
+                    cmd_input.cursor_position = len(cmd_input.value)
+                    cmd_input.focus()
+                    self.show_path_autocomplete(path + '/')
 
-    def search_ad(self, query):
-        """Search Active Directory."""
+    # ==================== Autocomplete ====================
+
+    def show_path_autocomplete(self, partial_path: str):
+        """Show autocomplete suggestions for paths."""
+        self.autocomplete_mode = True
+        
+        path_parts = [p.strip() for p in partial_path.split('/') if p.strip()]
+        
+        if path_parts:
+            current_parts = path_parts[:-1]
+            search_prefix = path_parts[-1].lower() if path_parts else ""
+            
+            if current_parts:
+                search_base = self.path_service.path_to_dn('/'.join(current_parts))
+            else:
+                search_base = self.base_dn
+        else:
+            search_base = self.base_dn
+            search_prefix = ""
+        
         try:
-            self.conn.search(
-                self.base_dn,
-                f'(|(cn=*{query}*)(objectClass=user)(objectClass=computer)(objectClass=group))',
-                attributes=['cn', 'objectClass']
-            )
-            results = []
-            for entry in self.conn.entries:
-                cn = str(entry['cn']) if 'cn' in entry else "Unknown"
-                obj_classes = [str(cls).lower() for cls in entry['objectClass']]
-                if 'user' in obj_classes and 'computer' not in obj_classes:
-                    label = f"👤 {cn}"
-                elif 'computer' in obj_classes:
-                    label = f"💻 {cn}"
-                elif 'group' in obj_classes:
-                    label = f"👥 {cn}"
+            ous = self.ldap_service.search_ous(search_base, search_prefix, limit=50)
+            
+            suggestions = []
+            for ou in ous:
+                if path_parts and len(path_parts) > 1:
+                    full_path = '/'.join(path_parts[:-1]) + '/' + ou['name']
                 else:
-                    label = f"📄 {cn}"
-                results.append({'label': label, 'dn': entry.entry_dn})
-            self.search_results_pane.populate(results)
-            self.search_results_pane.styles.display = "block"
-        except Exception as e:
-            print(f"Error searching AD: {e}")
+                    full_path = ou['name']
+                
+                suggestions.append({
+                    'label': f"📁 {full_path}",
+                    'dn': ou['dn'],
+                    'path': full_path
+                })
+            
+            if suggestions:
+                self.search_results_pane.populate(suggestions, self.conn)
+                self.search_results_pane.styles.display = "block"
+            else:
+                self.search_results_pane.clear()
+        except Exception:
+            pass
 
-    def populate_test_search_results(self):
-        """Populate the search results pane with test data."""
-        test_results = [
-            {"label": "👤 Test User 1", "dn": "cn=Test User 1,ou=Users,dc=example,dc=com"},
-            {"label": "💻 Test Computer 1", "dn": "cn=Test Computer 1,ou=Computers,dc=example,dc=com"},
-            {"label": "👥 Test Group 1", "dn": "cn=Test Group 1,ou=Groups,dc=example,dc=com"},
-        ]
-        self.search_results_pane.populate(test_results)
+    # ==================== Delete Operations ====================
+
+    def handle_delete_confirmation(self, confirmed: bool):
+        """Handle delete confirmation result."""
+        if confirmed and self.pending_delete_dn:
+            self.delete_object(self.pending_delete_dn)
+        else:
+            self.notify(MESSAGES['DELETE_CANCELLED'], severity=Severity.INFORMATION)
+        self.pending_delete_dn = None
+
+    def delete_object(self, dn: str):
+        """Delete an AD object."""
+        # Add to history
+        self.history_service.add('delete', {'dn': dn, 'label': self.current_selected_label})
+        
+        # Perform delete
+        success, message = self.ldap_service.delete_object(dn)
+        
+        if success:
+            self.notify(message, severity=Severity.INFORMATION)
+            self.current_selected_dn = None
+            self.current_selected_label = None
+            self.details.update_content(None)
+            self.action_refresh_ou()
+        else:
+            self.notify(message, severity=Severity.ERROR)
+
+    # ==================== Move Operations ====================
+
+    def handle_move_confirmation(self, confirmed: bool):
+        """Handle move confirmation result."""
+        if confirmed and self.pending_move_dn and self.pending_move_target:
+            self.move_object(self.pending_move_dn, self.pending_move_target)
+        else:
+            self.notify(MESSAGES['MOVE_CANCELLED'], severity=Severity.INFORMATION)
+        self.pending_move_dn = None
+        self.pending_move_target = None
+
+    def move_object(self, dn: str, target_ou: str):
+        """Move an AD object."""
+        original_parent = self.path_service.get_parent_dn(dn)
+        
+        success, message, new_dn = self.ldap_service.move_object(dn, target_ou)
+        
+        if success:
+            self.notify(message, severity=Severity.INFORMATION)
+            
+            # Add to history
+            self.history_service.add('move', {
+                'object': self.path_service.get_rdn(dn),
+                'original_parent': original_parent,
+                'new_dn': new_dn
+            })
+            
+            self.current_selected_dn = new_dn
+            if self.current_selected_label:
+                self.details.update_content(self.current_selected_label, new_dn, self.conn)
+            self.action_refresh_ou()
+        else:
+            self.notify(message, severity=Severity.ERROR)
+
+    # ==================== OU Creation ====================
+
+    def handle_create_ou_confirmation(self, result):
+        """Handle OU creation confirmation."""
+        if result:
+            ou_path, description = result
+            self.create_ou(ou_path, description)
+
+    def create_ou(self, path: str, description: str = ""):
+        """Create a new OU."""
+        full_dn = self.path_service.path_to_dn(path)
+        ou_name = self.path_service.extract_ou_name_from_path(path)
+        parent_dn = self.path_service.get_parent_dn(full_dn)
+        
+        success, message = self.ldap_service.create_ou(ou_name, parent_dn, description)
+        
+        if success:
+            self.notify(message, severity=Severity.INFORMATION)
+            self.history_service.add('create_ou', {'dn': f"ou={ou_name},{parent_dn}", 'name': ou_name})
+            self.action_refresh_ou()
+        else:
+            self.notify(message, severity=Severity.ERROR)
+
+    # ==================== Restore Operations ====================
+
+    def restore_object(self, deleted_dn: str):
+        """Restore a deleted object."""
+        success, message = self.ldap_service.restore_object(deleted_dn)
+        
+        if success:
+            self.notify(message, severity=Severity.INFORMATION)
+            self.action_refresh_ou()
+        else:
+            self.notify(message, severity=Severity.ERROR)
+
+    # ==================== Undo Operations ====================
+
+    def undo_create_ou(self, operation):
+        """Undo OU creation."""
+        ou_dn = operation.details['dn']
+        success, message = self.ldap_service.delete_object(ou_dn)
+        
+        if success:
+            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION)
+            self.history_service.pop_last()
+            self.action_refresh_ou()
+        else:
+            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR)
+
+    def undo_move(self, operation):
+        """Undo move operation."""
+        current_dn = operation.details['new_dn']
+        original_parent = operation.details['original_parent']
+        
+        success, message, _ = self.ldap_service.move_object(current_dn, original_parent)
+        
+        if success:
+            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION)
+            self.history_service.pop_last()
+            self.action_refresh_ou()
+        else:
+            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR)
+
 
 if __name__ == "__main__":
     print(f"Active Directory TUI - Domain: {DOMAIN}")
-    username = "REDACTED_USERNAME"  # input(f"Username [{last_user}]: ") or last_user
-    password = "REDACTED_PASSWORD" #getpass.getpass("Password: ")
+    username = input(f"Username [{last_user}]: ") or last_user
+    password = getpass.getpass("Password: ")
+    
     with open(LAST_USER_FILE, 'w') as f:
         f.write(username)
+    
     try:
         app = ADTUI(username, password)
         app.run()
     except Exception as e:
         print(f"Failed to connect: {e}")
-
