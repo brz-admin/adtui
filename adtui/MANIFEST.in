@@ -1,0 +1,25 @@
+# Include documentation
+include README.md
+include LICENSE
+include CHANGELOG.md
+include COMMANDS.md
+include FEATURES.md
+
+# Include configuration examples
+include config.ini.example
+
+# Include styles
+include styles.tcss
+
+# Include requirements
+include requirements.txt
+
+# Exclude development files
+exclude .gitignore
+exclude .git*
+exclude *.pyc
+exclude *.pyo
+exclude *~
+exclude __pycache__
+recursive-exclude __pycache__ *
+recursive-exclude *.egg-info *

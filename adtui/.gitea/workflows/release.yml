@@ -1,0 +1,186 @@
+name: Build and Release ADTUI
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine wheel
+
+      - name: Extract version from setup.py
+        id: get_version
+        run: |
+          VERSION=$(python -c "import re; content=open('setup.py').read(); print(re.search(r'version=\"(.+?)\"', content).group(1))")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if release exists
+        id: check_release
+        run: |
+          TAG="v${{ steps.get_version.outputs.VERSION }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "Release $TAG already exists, will skip creation"
+          else
+            echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "Release $TAG does not exist, will create"
+          fi
+
+      - name: Build Python package
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        run: |
+          python -m build
+          ls -lah dist/
+
+      - name: Create changelog
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        id: changelog
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          # ADTUI v${{ steps.get_version.outputs.VERSION }}
+          
+          ## 🎉 Features
+          - Complete refactored architecture
+          - Service layer for clean separation of concerns
+          - Command handler pattern
+          - Path autocomplete for move operations
+          - Account and password expiry alerts
+          - Undo support for operations
+          - AD Recycle Bin integration
+          
+          ## 📦 Installation
+          
+          ### Method 1: Install from wheel file
+          \`\`\`bash
+          pip install adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
+          \`\`\`
+          
+          ### Method 2: Install from source
+          \`\`\`bash
+          pip install adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          \`\`\`
+          
+          ### Method 3: Install directly from Gitea
+          \`\`\`bash
+          pip install git+https://your-gitea-instance.com/youruser/adtui.git@v${{ steps.get_version.outputs.VERSION }}
+          \`\`\`
+          
+          ## 🚀 Quick Start
+          
+          1. Create configuration file:
+          \`\`\`bash
+          cp config.ini.example config.ini
+          \`\`\`
+          
+          2. Edit config.ini with your AD details
+          
+          3. Run the application:
+          \`\`\`bash
+          adtui
+          \`\`\`
+          
+          ## 📋 Requirements
+          - Python 3.8+
+          - Access to Active Directory
+          - ldap3>=2.9.1
+          - textual>=0.40.0
+          
+          ## 📚 Documentation
+          See README.md and COMMANDS.md for full documentation.
+          
+          ## 🔒 Security
+          - No hardcoded credentials
+          - Secure password prompts
+          - Enable SSL in production (use_ssl = true)
+          EOF
+          
+          echo "Created release notes"
+
+      - name: Create Git tag
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        run: |
+          git config user.name "Gitea Actions"
+          git config user.email "actions@gitea.local"
+          git tag -a "v${{ steps.get_version.outputs.VERSION }}" -m "Release v${{ steps.get_version.outputs.VERSION }}"
+          git push origin "v${{ steps.get_version.outputs.VERSION }}"
+
+      - name: Create Release
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        uses: actions/create-release@v1
+        id: create_release
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          release_name: ADTUI v${{ steps.get_version.outputs.VERSION }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+
+      - name: Upload Wheel to Release
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
+          asset_name: adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
+          asset_content_type: application/zip
+
+      - name: Upload Source to Release
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_name: adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload Config Example
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./config.ini.example
+          asset_name: config.ini.example
+          asset_content_type: text/plain
+
+      - name: Release Summary
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        run: |
+          echo "✅ Release v${{ steps.get_version.outputs.VERSION }} created successfully!"
+          echo ""
+          echo "📦 Assets uploaded:"
+          echo "  - adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl"
+          echo "  - adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz"
+          echo "  - config.ini.example"
+          echo ""
+          echo "🔗 Users can install with:"
+          echo "  pip install <downloaded-wheel-file>"

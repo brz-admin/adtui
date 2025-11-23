@@ -405,7 +405,8 @@ class ADTUI(App):
             self.notify(f"Failed to undo: {message}", severity=Severity.ERROR)
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the application."""
     print(f"Active Directory TUI - Domain: {DOMAIN}")
     username = input(f"Username [{last_user}]: ") or last_user
     password = getpass.getpass("Password: ")
@@ -418,3 +419,7 @@ if __name__ == "__main__":
         app.run()
     except Exception as e:
         print(f"Failed to connect: {e}")
+
+
+if __name__ == "__main__":
+    main()

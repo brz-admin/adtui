@@ -1,0 +1,5 @@
+[ldap]
+server = servad4.domman.ad
+domain = DOMMAN
+base_dn = DC=domman,DC=ad
+use_ssl = false

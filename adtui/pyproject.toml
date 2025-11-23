@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adtui"
+version = "2.0.0"
+description = "Active Directory Terminal User Interface"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["active-directory", "ldap", "tui", "terminal", "ad-management"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+]
+dependencies = [
+    "ldap3>=2.9.1",
+    "textual>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "mypy>=1.0",
+    "pylint>=2.15",
+]
+
+[project.urls]
+Homepage = "https://gitea.brznet.fr/brz/adtui"
+Repository = "https://gitea.brznet.fr/brz/adtui"
+"Bug Tracker" = "https://github.com/yourusername/adtui/issues"
+
+[project.scripts]
+adtui = "adtui:main"
+
+[tool.setuptools]
+packages = ["adtui", "adtui.services", "adtui.commands", "adtui.ui", "adtui.widgets"]
+
+[tool.setuptools.package-data]
+adtui = ["*.tcss", "*.ini.example", "*.md"]
+
+[tool.black]
+line-length = 120
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pylint.messages_control]
+max-line-length = 120
