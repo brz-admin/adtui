@@ -1,11 +1,19 @@
 Screen {
-    layout: grid;
-    grid-columns: 1fr 2fr;
-    grid-rows: 1fr 3;
+    layout: vertical;
 }
 
 Horizontal {
-    width: 100%;
+    layout: horizontal;
+    height: 1fr;
+}
+
+Vertical {
+    layout: vertical;
+    height: 1fr;
+}
+
+ADTree, DetailsPane, SearchResultsPane {
+    height: 1fr;
 }
 
 Horizontal > Vertical:first-child {
@@ -51,6 +59,11 @@ Input {
 Button {
     margin-top: 1;
     width: 100%;
+}
+
+Footer {
+    dock: bottom;
+    height: auto;
 }
 
 /* Confirmation Dialog Styles */

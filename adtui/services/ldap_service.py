@@ -38,9 +38,12 @@ class LDAPService:
             object_types = ['user', 'computer', 'group']
         
         # Build object class filter
-        obj_filter = '|'.join([f'(objectClass={obj})' for obj in object_types])
+        if len(object_types) == 1:
+            obj_filter = f'(objectClass={object_types[0]})'
+        else:
+            obj_filter = '(|' + ''.join([f'(objectClass={obj})' for obj in object_types]) + ')'
         
-        ldap_filter = f'(&(|(cn=*{query}*)(sAMAccountName=*{query}*))({obj_filter}))'
+        ldap_filter = f'(&(|(cn=*{query}*)(sAMAccountName=*{query}*)){obj_filter})'
         
         try:
             self.conn.search(
@@ -360,12 +363,12 @@ class LDAPService:
             Icon string
         """
         if 'user' in object_classes and 'computer' not in object_classes:
-            return ObjectIcon.USER
+            return ObjectIcon.USER.value
         elif 'computer' in object_classes:
-            return ObjectIcon.COMPUTER
+            return ObjectIcon.COMPUTER.value
         elif 'group' in object_classes:
-            return ObjectIcon.GROUP
+            return ObjectIcon.GROUP.value
         elif 'organizationalunit' in object_classes:
-            return ObjectIcon.OU
+            return ObjectIcon.OU.value
         else:
-            return ObjectIcon.GENERIC
+            return ObjectIcon.GENERIC.value

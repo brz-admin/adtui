@@ -1,0 +1,72 @@
+name: Build and Release ADTUI (Simple)
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          pip install --upgrade pip
+          pip install build wheel
+
+      - name: Build package
+        run: python -m build
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(python setup.py --version)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "dist/*,config.ini.example,README.md,COMMANDS.md"
+          tag: v${{ steps.version.outputs.version }}
+          name: ADTUI v${{ steps.version.outputs.version }}
+          body: |
+            ## ADTUI v${{ steps.version.outputs.version }}
+            
+            Active Directory Terminal User Interface - Refactored and improved!
+            
+            ### Installation
+            Download the wheel file and install:
+            ```bash
+            pip install adtui-${{ steps.version.outputs.version }}-py3-none-any.whl
+            ```
+            
+            ### Configuration
+            1. Download config.ini.example
+            2. Rename to config.ini
+            3. Edit with your AD details
+            4. Run: `adtui`
+            
+            ### What's New
+            - ✨ Complete refactoring
+            - 🎯 Clean architecture
+            - 🔍 Search by CN or sAMAccountName
+            - 📁 Path autocomplete
+            - ⚠️ Expiry alerts
+            - ♻️ Recycle bin support
+            - 🔄 Undo operations
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITEA_TOKEN }}
+          allowUpdates: true
+          updateOnlyUnreleased: false

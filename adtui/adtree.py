@@ -89,19 +89,23 @@ class ADTree(Tree):
             for entry in objects:
                 cn = str(entry['cn']) if 'cn' in entry else "Unknown"
                 obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+                entry_dn = entry.entry_dn
                 
                 if 'user' in obj_classes and 'computer' not in obj_classes:
                     uac = int(entry['userAccountControl'].value)
                     is_disabled = (uac & 2) == 2
 
                     if is_disabled:
-                        parent_node.add_leaf(f"[dim]👤 {cn}[/]")
+                        node = parent_node.add_leaf(f"[dim]👤 {cn}[/]")
                     else:
-                        parent_node.add_leaf(f"👤 {cn}")
+                        node = parent_node.add_leaf(f"👤 {cn}")
+                    node.data = entry_dn
                 elif 'computer' in obj_classes:
-                    parent_node.add_leaf(f"💻 {cn}")
+                    node = parent_node.add_leaf(f"💻 {cn}")
+                    node.data = entry_dn
                 elif 'group' in obj_classes:
-                    parent_node.add_leaf(f"👥 {cn}")
+                    node = parent_node.add_leaf(f"👥 {cn}")
+                    node.data = entry_dn
 
         except Exception as e:
             print(f"Error populating OU {ou_dn}: {e}")
@@ -116,13 +120,17 @@ class ADTree(Tree):
             for entry in self.ou_cache[ou_dn]:
                 cn = str(entry['cn']) if 'cn' in entry else "Unknown"
                 obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+                entry_dn = entry.entry_dn
 
                 if 'user' in obj_classes and 'computer' not in obj_classes:
-                    parent_node.add_leaf(f"👤 {cn}")
+                    node = parent_node.add_leaf(f"👤 {cn}")
+                    node.data = entry_dn
                 elif 'computer' in obj_classes:
-                    parent_node.add_leaf(f"💻 {cn}")
+                    node = parent_node.add_leaf(f"💻 {cn}")
+                    node.data = entry_dn
                 elif 'group' in obj_classes:
-                    parent_node.add_leaf(f"👥 {cn}")
+                    node = parent_node.add_leaf(f"👥 {cn}")
+                    node.data = entry_dn
 
         except Exception as e:
             print(f"Error populating from cache for {ou_dn}: {e}")
@@ -130,8 +138,15 @@ class ADTree(Tree):
     def refresh_current_ou(self):
         """Refresh the currently selected OU."""
         if self.cursor_node and self.cursor_node.data:
-                # Clear and repopulate
+            # Clear cache for this OU
+            ou_dn = self.cursor_node.data
+            if ou_dn in self.ou_cache:
+                del self.ou_cache[ou_dn]
+            if ou_dn in self.loaded_ous:
+                self.loaded_ous.remove(ou_dn)
+            
+            # Clear and repopulate
             self.cursor_node.remove_children()
-            self.populate_ou(self.cursor_node, self.cursor_node.data)
+            self.populate_ou(self.cursor_node, ou_dn)
         else:
             print("OU not loaded yet, expand it first to load it")

@@ -3,12 +3,28 @@ from textual.containers import ScrollableContainer
 from textual.app import ComposeResult
 from .group_details import GroupDetailsPane
 from .user_details import UserDetailsPane
+import sys
+
+def debug_log(msg):
+    """Write debug message to file."""
+    with open('/tmp/adtui_debug.log', 'a') as f:
+        f.write(f"{msg}\n")
+        f.flush()
+    sys.stdout.flush()
 
 class DetailsPane(Static):
     """Main details pane that switches between different object types."""
     
+    DEFAULT_CSS = """
+    DetailsPane {
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    """
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.can_focus = True
         self.current_dn = None
         self.current_conn = None
         self.current_type = None
@@ -17,50 +33,79 @@ class DetailsPane(Static):
 
     def update_content(self, item_label, dn=None, conn=None):
         """Update the details pane based on the selected object type."""
+        debug_log(f"="*60)
+        debug_log(f"update_content called:")
+        debug_log(f"  item_label: {item_label}")
+        debug_log(f"  item_label repr: {repr(item_label)}")
+        debug_log(f"  dn: {dn}")
+        debug_log(f"  conn: {conn is not None}")
+        
         if not item_label:
+            debug_log("  -> No item_label, showing default message")
             self.update("Select an item to view details.")
             return
 
         if not dn or not conn:
+            debug_log(f"  -> Missing dn or conn (dn={dn is not None}, conn={conn is not None})")
             self.update(f"Details for: {item_label}\n\n[Select an object to view details]")
             return
         
         self.current_dn = dn
         self.current_conn = conn
         
+        debug_log(f"  Checking item type...")
         # Determine object type and display appropriate details
         if "👥" in item_label:  # Group
+            debug_log(f"  -> Detected GROUP icon")
             self.current_type = "group"
             self._show_group_details(dn, conn)
         elif "👤" in item_label:  # User
+            debug_log(f"  -> Detected USER icon")
             self.current_type = "user"
             self._show_user_details(dn, conn)
         elif "💻" in item_label:  # Computer
+            debug_log(f"  -> Detected COMPUTER icon")
             self.current_type = "computer"
             self._show_computer_details(item_label, dn, conn)
+        elif "📁" in item_label:  # OU (Organizational Unit)
+            debug_log(f"  -> Detected OU icon")
+            self.current_type = "ou"
+            self._show_ou_details(item_label, dn, conn)
         else:
+            debug_log(f"  -> NO ICON MATCHED! Unsupported type")
+            debug_log(f"     Label: {item_label}")
+            debug_log(f"     Label contains user icon: {"👤" in str(item_label)}")
+            debug_log(f"     Label contains group icon: {"👥" in str(item_label)}")
             self.current_type = None
             self.update(f"Details for: {item_label}\n\n[Unsupported object type]")
+        debug_log(f"="*60)
 
     def _show_user_details(self, dn, conn):
         """Display user details with tabs."""
-        self.user_details = UserDetailsPane()
-        self.user_details.update_user_details(dn, conn)
-        
-        # Create tabbed interface
-        content = f"""[bold cyan]USER DETAILS[/bold cyan]
-
-{self.user_details._build_content()}
-"""
-        self.update(content)
+        try:
+            self.user_details = UserDetailsPane()
+            self.user_details.update_user_details(dn, conn)
+            
+            # Get the content
+            content = self.user_details._build_content()
+            self.update(content)
+        except Exception as e:
+            self.update(f"[bold cyan]USER DETAILS[/bold cyan]\n\n[red]Error loading user details: {e}[/red]")
+            import traceback
+            traceback.print_exc()
 
     def _show_group_details(self, dn, conn):
         """Display group details."""
-        self.group_details = GroupDetailsPane()
-        self.group_details.update_group_details(dn, conn)
-        
-        content = f"{self.group_details._build_content()}"
-        self.update(content)
+        try:
+            self.group_details = GroupDetailsPane()
+            self.group_details.update_group_details(dn, conn)
+            
+            content = self.group_details._build_content()
+            self.update(content)
+        except Exception as e:
+            self.update(f"[bold cyan]GROUP DETAILS[/bold cyan]\n\n[red]Error loading group details: {e}[/red]")
+            import traceback
+            traceback.print_exc()
 
     def _show_computer_details(self, label, dn, conn):
         """Display basic computer details."""
@@ -91,7 +136,45 @@ DN: {dn}
         except Exception as e:
             self.update(f"Details for: {label}\n\n[red]Error: {e}[/red]")
 
-    def refresh(self):
+    def _show_ou_details(self, label, dn, conn):
+        """Display OU (Organizational Unit) details."""
+        try:
+            conn.search(dn, '(objectClass=*)', search_scope='BASE', attributes=['*'])
+            if conn.entries:
+                entry = conn.entries[0]
+                
+                ou_name = str(entry.ou.value) if hasattr(entry, 'ou') else "N/A"
+                description = str(entry.description.value) if hasattr(entry, 'description') else "N/A"
+                when_created = str(entry.whenCreated.value) if hasattr(entry, 'whenCreated') else "N/A"
+                when_changed = str(entry.whenChanged.value) if hasattr(entry, 'whenChanged') else "N/A"
+                
+                # Count child objects
+                conn.search(dn, '(objectClass=*)', search_scope='LEVEL', attributes=['objectClass'])
+                child_count = len(conn.entries)
+                
+                content = f"""[bold cyan]Organizational Unit Details[/bold cyan]
+
+[bold]General Information:[/bold]
+OU Name: {ou_name}
+Description: {description}
+DN: {dn}
+
+[bold]Statistics:[/bold]
+Direct Children: {child_count}
+
+[bold]Timestamps:[/bold]
+Created: {when_created}
+Last Modified: {when_changed}
+
+[dim]Select users, groups, or computers within this OU to view their details[/dim]
+"""
+                self.update(content)
+            else:
+                self.update(f"Details for: {label}\n\n[Could not load OU details]")
+        except Exception as e:
+            self.update(f"Details for: {label}\n\n[red]Error: {e}[/red]")
+
+    def refresh_details(self):
         """Refresh the current details view."""
         if self.current_type == "user" and self.user_details:
             self.user_details.load_user_details()
@@ -99,4 +182,6 @@ DN: {dn}
         elif self.current_type == "group" and self.group_details:
             self.group_details.load_group_details()
             self._show_group_details(self.current_dn, self.current_conn)
+        elif self.current_type == "ou":
+            self._show_ou_details(self.current_selected_label, self.current_dn, self.current_conn)
 

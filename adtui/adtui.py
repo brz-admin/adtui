@@ -85,10 +85,10 @@ class ADTUI(App):
     
     CSS_PATH = "styles.tcss"
     BINDINGS = [
-        Binding("escape", "quit", "Quit", show=True),
         Binding(":", "command_mode", "Command", show=True),
         Binding("/", "search_mode", "Search", show=True),
         Binding("r", "refresh_ou", "Refresh OU", show=True),
+        Binding("escape", "cancel_command", "Cancel", show=False),
     ]
 
     def __init__(self, username: str, password: str):
@@ -138,8 +138,8 @@ class ADTUI(App):
             with Vertical():
                 yield self.details
                 yield self.search_results_pane
-        yield Input(placeholder=": command/search", id="command-input")
         yield Footer()
+        yield Input(placeholder=": command/search", id="command-input")
 
     def on_mount(self):
         """Handle mount event."""
@@ -168,6 +168,19 @@ class ADTUI(App):
     def action_refresh_ou(self):
         """Refresh the currently selected OU."""
         self.adtree.refresh_current_ou()
+    
+    def action_cancel_command(self):
+        """Cancel command mode and hide input."""
+        if self.command_mode:
+            cmd_input = self.query_one("#command-input", Input)
+            cmd_input.value = ""
+            cmd_input.visible = False
+            self.command_mode = False
+            self.autocomplete_mode = False
+            # Hide search results if visible
+            self.search_results_pane.styles.display = "none"
+            # Return focus to tree
+            self.adtree.focus()
 
     def _set_input_prefix(self, prefix: str):
         """Set the input prefix and move cursor to end."""
@@ -210,32 +223,137 @@ class ADTUI(App):
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """Handle tree node selection."""
         node = event.node
+        print(f"\n*** TREE NODE SELECTED ***")
+        print(f"Node label: {node.label}")
+        print(f"Node data (DN): {node.data}")
+        print(f"Label type: {type(node.label)}")
         self.current_selected_dn = node.data
         self.current_selected_label = node.label
+        print(f"Calling details.update_content...")
         self.details.update_content(node.label, node.data, self.conn)
+        print(f"*** TREE NODE SELECTED END ***\n")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted):
         """Handle list view highlighting."""
-        if event.list_view.id == "search-results-pane":
+        if event.list_view.id == "search-results-pane" and not self.autocomplete_mode:
             item = event.item
-            self.current_selected_dn = item.data
-            self.current_selected_label = item.text
-            self.details.update_content(item.text, item.data, self.conn)
+            if hasattr(item, 'data') and item.data:
+                self.current_selected_dn = item.data
+                self.current_selected_label = item.text
+                self.details.update_content(item.text, item.data, self.conn)
+                # Try to expand tree to this location
+                self.expand_tree_to_dn(item.data)
 
     def on_list_view_selected(self, event: ListView.Selected):
-        """Handle autocomplete selection."""
-        if self.autocomplete_mode and event.list_view.id == "search-results-pane":
+        """Handle list view selection (Enter key)."""
+        if event.list_view.id == "search-results-pane":
             item = event.item
             if hasattr(item, 'data'):
-                label = item.text
-                if '📁' in label:
-                    path = label.replace('📁 ', '').strip()
-                    cmd_input = self.query_one("#command-input", Input)
-                    cmd_input.value = f":m {path}/"
-                    cmd_input.cursor_position = len(cmd_input.value)
-                    cmd_input.focus()
-                    self.show_path_autocomplete(path + '/')
+                if self.autocomplete_mode:
+                    # Autocomplete: complete the path
+                    label = item.text
+                    if '📁' in label:
+                        # Extract path, preserving spaces
+                        path = label.replace('📁 ', '').strip()
+                        cmd_input = self.query_one("#command-input", Input)
+                        # Check if path ends with / to continue or complete
+                        if path.endswith('/'):
+                            cmd_input.value = f":m {path}"
+                        else:
+                            cmd_input.value = f":m {path}/"
+                        cmd_input.cursor_position = len(cmd_input.value)
+                        cmd_input.focus()
+                        self.show_path_autocomplete(path + '/' if not path.endswith('/') else path)
+                else:
+                    # Search result: show details and expand tree
+                    self.current_selected_dn = item.data
+                    self.current_selected_label = item.text
+                    self.details.update_content(item.text, item.data, self.conn)
+                    self.expand_tree_to_dn(item.data)
+                    # Hide search results and return focus to tree
+                    self.search_results_pane.styles.display = "none"
+                    self.adtree.focus()
 
+    # ==================== Tree Navigation ====================
+    
+    def expand_tree_to_dn(self, dn: str) -> None:
+        """Expand the tree to show the given DN.
+        
+        Args:
+            dn: The Distinguished Name to navigate to
+        """
+        if not dn:
+            return
+        
+        try:
+            # Parse DN into components (skip the object itself, get parent path)
+            dn_parts = dn.split(',')
+            
+            # Find OUs in the path (skip first part which is the object)
+            ou_path = []
+            for part in dn_parts[1:]:
+                if part.lower().startswith('ou='):
+                    ou_name = part.split('=', 1)[1]
+                    ou_path.append(ou_name)
+            
+            # Reverse to get from root to leaf
+            ou_path.reverse()
+            
+            # Navigate through the tree
+            current_node = self.adtree.root
+            
+            for ou_name in ou_path:
+                # Expand current node if not expanded
+                if not current_node.is_expanded:
+                    current_node.expand()
+                
+                # Find the child with this OU name
+                found = False
+                for child in current_node.children:
+                    child_label = str(child.label)
+                    # Remove emoji and extra spaces
+                    clean_label = child_label.replace('📁', '').strip()
+                    if clean_label == ou_name or clean_label == f"{ou_name}":
+                        current_node = child
+                        found = True
+                        break
+                
+                if not found:
+                    # Can't navigate further
+                    break
+            
+            # Expand the final OU to show its contents
+            if current_node and current_node != self.adtree.root:
+                if not current_node.is_expanded:
+                    current_node.expand()
+                    # Give it a moment to load
+                    self.set_timer(0.2, lambda: self._select_object_in_tree(current_node, dn))
+                else:
+                    self._select_object_in_tree(current_node, dn)
+        
+        except Exception as e:
+            # Silently fail - tree expansion is a nice-to-have feature
+            print(f"Could not expand tree to DN: {e}")
+    
+    def _select_object_in_tree(self, parent_node, target_dn: str) -> None:
+        """Select the specific object in the tree.
+        
+        Args:
+            parent_node: The parent OU node
+            target_dn: The target object's DN
+        """
+        try:
+            # Look for the object in the parent's children
+            for child in parent_node.children:
+                if hasattr(child, 'data') and child.data == target_dn:
+                    # Select this node
+                    self.adtree.select_node(child)
+                    # Scroll to make it visible
+                    child.scroll_visible()
+                    break
+        except Exception as e:
+            print(f"Could not select object in tree: {e}")
+    
     # ==================== Autocomplete ====================
 
     def show_path_autocomplete(self, partial_path: str):
@@ -287,7 +405,7 @@ class ADTUI(App):
         if confirmed and self.pending_delete_dn:
             self.delete_object(self.pending_delete_dn)
         else:
-            self.notify(MESSAGES['DELETE_CANCELLED'], severity=Severity.INFORMATION)
+            self.notify(MESSAGES['DELETE_CANCELLED'], severity=Severity.INFORMATION.value)
         self.pending_delete_dn = None
 
     def delete_object(self, dn: str):
@@ -299,13 +417,13 @@ class ADTUI(App):
         success, message = self.ldap_service.delete_object(dn)
         
         if success:
-            self.notify(message, severity=Severity.INFORMATION)
+            self.notify(message, severity=Severity.INFORMATION.value)
             self.current_selected_dn = None
             self.current_selected_label = None
             self.details.update_content(None)
             self.action_refresh_ou()
         else:
-            self.notify(message, severity=Severity.ERROR)
+            self.notify(message, severity=Severity.ERROR.value)
 
     # ==================== Move Operations ====================
 
@@ -314,7 +432,7 @@ class ADTUI(App):
         if confirmed and self.pending_move_dn and self.pending_move_target:
             self.move_object(self.pending_move_dn, self.pending_move_target)
         else:
-            self.notify(MESSAGES['MOVE_CANCELLED'], severity=Severity.INFORMATION)
+            self.notify(MESSAGES['MOVE_CANCELLED'], severity=Severity.INFORMATION.value)
         self.pending_move_dn = None
         self.pending_move_target = None
 
@@ -325,7 +443,7 @@ class ADTUI(App):
         success, message, new_dn = self.ldap_service.move_object(dn, target_ou)
         
         if success:
-            self.notify(message, severity=Severity.INFORMATION)
+            self.notify(message, severity=Severity.INFORMATION.value)
             
             # Add to history
             self.history_service.add('move', {
@@ -339,7 +457,7 @@ class ADTUI(App):
                 self.details.update_content(self.current_selected_label, new_dn, self.conn)
             self.action_refresh_ou()
         else:
-            self.notify(message, severity=Severity.ERROR)
+            self.notify(message, severity=Severity.ERROR.value)
 
     # ==================== OU Creation ====================
 
@@ -358,11 +476,11 @@ class ADTUI(App):
         success, message = self.ldap_service.create_ou(ou_name, parent_dn, description)
         
         if success:
-            self.notify(message, severity=Severity.INFORMATION)
+            self.notify(message, severity=Severity.INFORMATION.value)
             self.history_service.add('create_ou', {'dn': f"ou={ou_name},{parent_dn}", 'name': ou_name})
             self.action_refresh_ou()
         else:
-            self.notify(message, severity=Severity.ERROR)
+            self.notify(message, severity=Severity.ERROR.value)
 
     # ==================== Restore Operations ====================
 
@@ -371,10 +489,10 @@ class ADTUI(App):
         success, message = self.ldap_service.restore_object(deleted_dn)
         
         if success:
-            self.notify(message, severity=Severity.INFORMATION)
+            self.notify(message, severity=Severity.INFORMATION.value)
             self.action_refresh_ou()
         else:
-            self.notify(message, severity=Severity.ERROR)
+            self.notify(message, severity=Severity.ERROR.value)
 
     # ==================== Undo Operations ====================
 
@@ -384,11 +502,11 @@ class ADTUI(App):
         success, message = self.ldap_service.delete_object(ou_dn)
         
         if success:
-            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION)
+            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION.value)
             self.history_service.pop_last()
             self.action_refresh_ou()
         else:
-            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR)
+            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR.value)
 
     def undo_move(self, operation):
         """Undo move operation."""
@@ -398,18 +516,18 @@ class ADTUI(App):
         success, message, _ = self.ldap_service.move_object(current_dn, original_parent)
         
         if success:
-            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION)
+            self.notify(MESSAGES['UNDO_SUCCESS'], severity=Severity.INFORMATION.value)
             self.history_service.pop_last()
             self.action_refresh_ou()
         else:
-            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR)
+            self.notify(f"Failed to undo: {message}", severity=Severity.ERROR.value)
 
 
 def main():
     """Main entry point for the application."""
     print(f"Active Directory TUI - Domain: {DOMAIN}")
     username = input(f"Username [{last_user}]: ") or last_user
-    password = getpass.getpass("Password: ")
+    password = "REDACTED_PASSWORD" #getpass.getpass("Password: ")
     
     with open(LAST_USER_FILE, 'w') as f:
         f.write(username)

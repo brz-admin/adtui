@@ -14,19 +14,23 @@ class GroupDetailsPane(Static):
 
     def update_group_details(self, group_dn, conn):
         """Load and display group details."""
+        print(f"update_group_details called with DN: {group_dn}")
         self.group_dn = group_dn
         self.conn = conn
         self.load_group_details()
-        self.refresh_display()
+        print(f"load_group_details completed. Entry: {self.entry is not None}")
 
     def load_group_details(self):
         """Fetch group members and memberOf from LDAP."""
+        print(f"load_group_details: Searching for {self.group_dn}")
         try:
             self.conn.search(
                 self.group_dn,
                 '(objectClass=*)',
+                search_scope='BASE',
                 attributes=['cn', 'member', 'memberOf', 'description', 'groupType']
             )
+            print(f"Search completed. Entries found: {len(self.conn.entries)}")
             if self.conn.entries:
                 self.entry = self.conn.entries[0]
                 
@@ -54,20 +58,22 @@ class GroupDetailsPane(Static):
                 else:
                     self.member_of = []
         except Exception as e:
-            self.app.notify(f"Error loading group details: {e}", severity="error")
+            print(f"Error loading group details: {e}")
+            import traceback
+            traceback.print_exc()
 
     def refresh_display(self):
         """Refresh the displayed content."""
         if not self.entry:
-            self.update("[red]Error loading group details[/red]")
-            return
+            return "[red]Error loading group details[/red]"
         
-        content = self._build_content()
-        self.update(content)
+        return self._build_content()
 
     def _build_content(self):
         """Build the content string for display."""
+        print(f"_build_content called. Entry exists: {self.entry is not None}")
         if not self.entry:
+            print("No entry found, returning 'No group data'")
             return "No group data"
         
         # General Information
@@ -115,7 +121,7 @@ DN: {self.group_dn}
         else:
             content += "  Not a member of any group\n"
         
-        content += "\n[dim]Press 'm' to manage members | 'g' to manage group membership[/dim]"
+        content += "\n[dim]Use :delete to remove | :move to relocate this group[/dim]"
         
         return content
 
@@ -124,15 +130,14 @@ DN: {self.group_dn}
         try:
             self.conn.modify(self.group_dn, {'member': [(MODIFY_ADD, [member_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully added member", severity="information")
+                print("Successfully added member")
                 self.load_group_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to add member: {self.conn.result['message']}", severity="error")
+                print(f"Failed to add member: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error adding member: {e}", severity="error")
+            print(f"Error adding member: {e}")
             return False
 
     def remove_member(self, member_dn):
@@ -140,15 +145,14 @@ DN: {self.group_dn}
         try:
             self.conn.modify(self.group_dn, {'member': [(MODIFY_DELETE, [member_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully removed member", severity="information")
+                print("Successfully removed member")
                 self.load_group_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to remove member: {self.conn.result['message']}", severity="error")
+                print(f"Failed to remove member: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error removing member: {e}", severity="error")
+            print(f"Error removing member: {e}")
             return False
 
     def join_group(self, parent_group_dn):
@@ -156,15 +160,14 @@ DN: {self.group_dn}
         try:
             self.conn.modify(parent_group_dn, {'member': [(MODIFY_ADD, [self.group_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully joined group", severity="information")
+                print("Successfully joined group")
                 self.load_group_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to join group: {self.conn.result['message']}", severity="error")
+                print(f"Failed to join group: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error joining group: {e}", severity="error")
+            print(f"Error joining group: {e}")
             return False
 
     def leave_group(self, parent_group_dn):
@@ -172,14 +175,13 @@ DN: {self.group_dn}
         try:
             self.conn.modify(parent_group_dn, {'member': [(MODIFY_DELETE, [self.group_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully left group", severity="information")
+                print("Successfully left group")
                 self.load_group_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to leave group: {self.conn.result['message']}", severity="error")
+                print(f"Failed to leave group: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error leaving group: {e}", severity="error")
+            print(f"Error leaving group: {e}")
             return False
 

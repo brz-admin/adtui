@@ -15,19 +15,23 @@ class UserDetailsPane(Static):
 
     def update_user_details(self, user_dn, conn):
         """Load and display user details."""
+        print(f"update_user_details called with DN: {user_dn}")
         self.user_dn = user_dn
         self.conn = conn
         self.load_user_details()
-        self.refresh_display()
+        print(f"load_user_details completed. Entry: {self.entry is not None}")
 
     def load_user_details(self):
         """Fetch user details from LDAP."""
+        print(f"load_user_details: Searching for {self.user_dn}")
         try:
             self.conn.search(
                 self.user_dn,
                 '(objectClass=*)',
+                search_scope='BASE',
                 attributes=['*']
             )
+            print(f"Search completed. Entries found: {len(self.conn.entries)}")
             if self.conn.entries:
                 self.entry = self.conn.entries[0]
                 # Extract member of groups (just the CN)
@@ -46,21 +50,23 @@ class UserDetailsPane(Static):
                 if hasattr(self.entry, 'entry_attributes'):
                     self.raw_attributes = dict(self.entry.entry_attributes)
         except Exception as e:
-            self.app.notify(f"Error loading user details: {e}", severity="error")
+            print(f"Error loading user details: {e}")
+            import traceback
+            traceback.print_exc()
 
     def refresh_display(self):
         """Refresh the displayed content."""
         if not self.entry:
-            self.update("[red]Error loading user details[/red]")
-            return
+            return "[red]Error loading user details[/red]"
         
         # Build the display content
-        content = self._build_content()
-        self.update(content)
+        return self._build_content()
 
     def _build_content(self):
         """Build the content string for display."""
+        print(f"_build_content called. Entry exists: {self.entry is not None}")
         if not self.entry:
+            print("No entry found, returning 'No user data'")
             return "No user data"
         
         # General Information
@@ -157,7 +163,7 @@ Password Last Set: {pwd_last_set}
         else:
             content += "  No group memberships\n"
         
-        content += "\n[dim]Press 'e' to edit | 'g' to manage groups | 'a' to view all attributes[/dim]"
+        content += "\n[dim]Use :delete to remove | :move to relocate this user[/dim]"
         
         return content
 
@@ -185,15 +191,14 @@ Password Last Set: {pwd_last_set}
         try:
             self.conn.modify(self.user_dn, {attribute: [(MODIFY_REPLACE, [value])]})
             if self.conn.result['result'] == 0:
-                self.app.notify(f"Successfully updated {attribute}", severity="information")
+                print(f"Successfully updated {attribute}")
                 self.load_user_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to update {attribute}: {self.conn.result['message']}", severity="error")
+                print(f"Failed to update {attribute}: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error updating {attribute}: {e}", severity="error")
+            print(f"Error updating {attribute}: {e}")
             return False
 
     def add_to_group(self, group_dn):
@@ -201,15 +206,14 @@ Password Last Set: {pwd_last_set}
         try:
             self.conn.modify(group_dn, {'member': [(MODIFY_ADD, [self.user_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully joined group", severity="information")
+                print("Successfully joined group")
                 self.load_user_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to join group: {self.conn.result['message']}", severity="error")
+                print(f"Failed to join group: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error joining group: {e}", severity="error")
+            print(f"Error joining group: {e}")
             return False
 
     def remove_from_group(self, group_dn):
@@ -217,14 +221,13 @@ Password Last Set: {pwd_last_set}
         try:
             self.conn.modify(group_dn, {'member': [(MODIFY_DELETE, [self.user_dn])]})
             if self.conn.result['result'] == 0:
-                self.app.notify("Successfully left group", severity="information")
+                print("Successfully left group")
                 self.load_user_details()
-                self.refresh_display()
                 return True
             else:
-                self.app.notify(f"Failed to leave group: {self.conn.result['message']}", severity="error")
+                print(f"Failed to leave group: {self.conn.result['message']}")
                 return False
         except Exception as e:
-            self.app.notify(f"Error leaving group: {e}", severity="error")
+            print(f"Error leaving group: {e}")
             return False
 
