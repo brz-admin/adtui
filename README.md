@@ -8,7 +8,7 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 - 🔍 **Search** - Search by CN or sAMAccountName with vim-style `/` search
 - 📁 **Tree Navigation** - Browse AD organizational structure with lazy loading
-- 👤 **User Management** - View and manage user details, group memberships
+- 👤 **User Management** - View and manage user details, group memberships, create/copy users
 - 👥 **Group Management** - Manage groups and their members
 - 💻 **Computer Management** - View computer object details
 
@@ -23,10 +23,12 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 ### Operations
 
 - Create/Delete OUs
+- Create/Copy user accounts
 - Move objects between OUs
 - Add/Remove users from groups
 - Delete objects (with confirmation)
 - Restore deleted objects
+- Unlock user accounts
 
 ## Installation
 
@@ -96,6 +98,15 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 :createou <path>  Same as :mkou
 ```
 
+#### User Management
+
+```
+:createuser [ou]  Create new user account (uses current OU if not specified)
+:cu [ou]         Same as :createuser
+:copyuser [source] [ou] Copy user account (uses current selection if not specified)
+:unlock           Unlock currently selected locked user account
+```
+
 #### Recovery & History
 
 ```
@@ -109,6 +120,18 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 ```
 :help             Show help
 ```
+
+### Keyboard Shortcuts
+
+- `/` - Open search (vim-style)
+- `:` - Enter command mode
+- `r` - Refresh current OU
+- `a` - Edit attributes of selected object
+- `g` - Manage groups for selected user
+- `p` - Set password for selected user
+- `c` - Create new user account
+- `C` - Copy selected user account
+- `Esc` - Quit application
 
 ### Keyboard Shortcuts
 
@@ -137,6 +160,20 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 :mkou Departments/Sales/Region1
 ```
 
+**Create a user:**
+
+```
+:createuser
+:cu IT/Staff
+```
+
+**Copy a user:**
+
+```
+:C
+:copyuser "CN=John Doe,OU=Users,DC=example,DC=com" IT/Staff
+```
+
 **View deleted objects:**
 
 ```
@@ -160,6 +197,7 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 
 - `ldap3>=2.9.1` - LDAP operations
 - `textual>=0.40.0` - Terminal UI framework
+- `prompt_toolkit>=3.0.0` - Enhanced input handling
 
 ## Features by AD Object Type
 
@@ -170,6 +208,10 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 - Password status and expiry warnings
 - Group memberships
 - Join/leave groups
+- Create new user accounts
+- Copy existing user accounts
+- Set/change passwords
+- Unlock locked accounts
 
 ### Groups (👥)
 
@@ -291,6 +333,7 @@ MIT License - see LICENSE file for details
 - ✨ New: Account and password expiry alerts
 - ✨ New: Undo support for operations
 - ✨ New: AD Recycle Bin integration
+- ✨ New: Comprehensive user account creation and copy functionality
 - 🔧 Improved: Separation of concerns (services layer)
 - 🔧 Improved: Command handler pattern
 - 🔧 Improved: Type hints throughout
