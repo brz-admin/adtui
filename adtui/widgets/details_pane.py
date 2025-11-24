@@ -1,16 +1,10 @@
 from textual.widgets import Static, TabbedContent, TabPane
 from textual.containers import ScrollableContainer
 from textual.app import ComposeResult
+from textual.binding import Binding
 from .group_details import GroupDetailsPane
 from .user_details import UserDetailsPane
 import sys
-
-def debug_log(msg):
-    """Write debug message to file."""
-    with open('/tmp/adtui_debug.log', 'a') as f:
-        f.write(f"{msg}\n")
-        f.flush()
-    sys.stdout.flush()
 
 class DetailsPane(Static):
     """Main details pane that switches between different object types."""
@@ -22,63 +16,119 @@ class DetailsPane(Static):
     }
     """
     
+    BINDINGS = [
+        Binding("e", "edit_object", "Edit", show=True),
+        Binding("g", "manage_groups", "Groups", show=True),
+        Binding("a", "view_attributes", "Attributes", show=True),
+    ]
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.can_focus = True
         self.current_dn = None
         self.current_conn = None
         self.current_type = None
+        self.current_label = None
         self.user_details = None
         self.group_details = None
 
     def update_content(self, item_label, dn=None, conn=None):
         """Update the details pane based on the selected object type."""
-        debug_log(f"="*60)
-        debug_log(f"update_content called:")
-        debug_log(f"  item_label: {item_label}")
-        debug_log(f"  item_label repr: {repr(item_label)}")
-        debug_log(f"  dn: {dn}")
-        debug_log(f"  conn: {conn is not None}")
-        
         if not item_label:
-            debug_log("  -> No item_label, showing default message")
             self.update("Select an item to view details.")
             return
 
         if not dn or not conn:
-            debug_log(f"  -> Missing dn or conn (dn={dn is not None}, conn={conn is not None})")
             self.update(f"Details for: {item_label}\n\n[Select an object to view details]")
             return
         
         self.current_dn = dn
         self.current_conn = conn
+        self.current_label = item_label
         
-        debug_log(f"  Checking item type...")
         # Determine object type and display appropriate details
         if "👥" in item_label:  # Group
-            debug_log(f"  -> Detected GROUP icon")
             self.current_type = "group"
             self._show_group_details(dn, conn)
         elif "👤" in item_label:  # User
-            debug_log(f"  -> Detected USER icon")
             self.current_type = "user"
             self._show_user_details(dn, conn)
         elif "💻" in item_label:  # Computer
-            debug_log(f"  -> Detected COMPUTER icon")
             self.current_type = "computer"
             self._show_computer_details(item_label, dn, conn)
         elif "📁" in item_label:  # OU (Organizational Unit)
-            debug_log(f"  -> Detected OU icon")
             self.current_type = "ou"
             self._show_ou_details(item_label, dn, conn)
         else:
-            debug_log(f"  -> NO ICON MATCHED! Unsupported type")
-            debug_log(f"     Label: {item_label}")
-            debug_log(f"     Label contains user icon: {"👤" in str(item_label)}")
-            debug_log(f"     Label contains group icon: {"👥" in str(item_label)}")
             self.current_type = None
             self.update(f"Details for: {item_label}\n\n[Unsupported object type]")
-        debug_log(f"="*60)
+
+    
+    def action_edit_object(self):
+        """Handle edit action."""
+        if not self.current_dn:
+            self.app.notify("No object selected", severity="warning")
+            return
+        
+        if self.current_type == "user":
+            from ui.dialogs import EditUserDialog
+            self.app.push_screen(EditUserDialog(self.current_dn, self.current_conn, self.user_details))
+        elif self.current_type == "group":
+            self.app.notify("Group editing not yet implemented", severity="information")
+        else:
+            self.app.notify("Editing not supported for this object type", severity="warning")
+    
+    def action_manage_groups(self):
+        """Handle group management action."""
+        if not self.current_dn:
+            self.app.notify("No object selected", severity="warning")
+            return
+        
+        if self.current_type == "user":
+            from ui.dialogs import ManageGroupsDialog
+            self.app.push_screen(ManageGroupsDialog(self.current_dn, self.current_conn, self.user_details))
+        elif self.current_type == "group":
+            from ui.dialogs import ManageGroupMembersDialog
+            self.app.push_screen(ManageGroupMembersDialog(self.current_dn, self.current_conn, self.group_details))
+        else:
+            self.app.notify("Group management not supported for this object type", severity="warning")
+    
+    def action_view_attributes(self):
+        """Handle view all attributes action."""
+        if not self.current_dn:
+            self.app.notify("No object selected", severity="warning")
+            return
+        
+        if self.current_type == "user" and self.user_details:
+            content = self.user_details.get_raw_attributes_text()
+            self.update(content)
+        else:
+            # For any object, show raw LDAP attributes
+            try:
+                self.current_conn.search(
+                    self.current_dn,
+                    '(objectClass=*)',
+                    search_scope='BASE',
+                    attributes=['*']
+                )
+                if self.current_conn.entries:
+                    entry = self.current_conn.entries[0]
+                    lines = ["[bold cyan]Raw LDAP Attributes[/bold cyan]\n"]
+                    for attr in sorted(entry.entry_attributes_as_dict.keys()):
+                        values = entry.entry_attributes_as_dict[attr]
+                        if isinstance(values, list) and len(values) == 1:
+                            lines.append(f"[bold]{attr}:[/bold] {values[0]}")
+                        elif isinstance(values, list):
+                            lines.append(f"[bold]{attr}:[/bold]")
+                            for val in values:
+                                lines.append(f"  • {val}")
+                        else:
+                            lines.append(f"[bold]{attr}:[/bold] {values}")
+                    self.update("\n".join(lines))
+                else:
+                    self.app.notify("Could not load attributes", severity="error")
+            except Exception as e:
+                self.app.notify(f"Error loading attributes: {e}", severity="error")
 
     def _show_user_details(self, dn, conn):
         """Display user details with tabs."""

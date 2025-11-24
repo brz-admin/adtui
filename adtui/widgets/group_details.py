@@ -121,7 +121,7 @@ DN: {self.group_dn}
         else:
             content += "  Not a member of any group\n"
         
-        content += "\n[dim]Use :delete to remove | :move to relocate this group[/dim]"
+        content += "\n[dim]Press 'g' to manage members | 'a' to view all attributes[/dim]"
         
         return content
 
