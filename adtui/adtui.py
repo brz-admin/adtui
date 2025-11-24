@@ -78,6 +78,10 @@ class SearchResultsPane(ListView):
             item.text = result["label"]
             item.data = result['dn']
             self.append(item)
+        
+        # Auto-highlight first item
+        if len(results) > 0:
+            self.index = 0
 
 
 class ADTUI(App):
@@ -88,7 +92,11 @@ class ADTUI(App):
         Binding(":", "command_mode", "Command", show=True),
         Binding("/", "search_mode", "Search", show=True),
         Binding("r", "refresh_ou", "Refresh OU", show=True),
+        Binding("a", "edit_attributes", "Attributes", show=True),
+        Binding("g", "manage_groups", "Groups", show=True),
+        Binding("p", "set_password", "Password", show=True),
         Binding("escape", "cancel_command", "Cancel", show=False),
+        Binding("tab", "cycle_focus", "Cycle Focus", show=False),
     ]
 
     def __init__(self, username: str, password: str):
@@ -181,6 +189,67 @@ class ADTUI(App):
             self.search_results_pane.styles.display = "none"
             # Return focus to tree
             self.adtree.focus()
+    
+    def action_cycle_focus(self):
+        """Cycle focus between widgets."""
+        # In autocomplete mode, tab between input and results
+        if self.autocomplete_mode:
+            focused = self.focused
+            cmd_input = self.query_one("#command-input", Input)
+            
+            # If currently on input or not on results, go to results
+            if focused == cmd_input or focused != self.search_results_pane:
+                if self.search_results_pane.styles.display == "block":
+                    self.search_results_pane.focus()
+            else:
+                # Go back to input
+                cmd_input.focus()
+        else:
+            # Normal tab behavior
+            self.focus_next()
+    
+    def action_edit_attributes(self):
+        """Edit attributes of selected object."""
+        if not self.current_selected_dn:
+            self.notify("No object selected", severity="warning")
+            return
+        from ui.dialogs import EditAttributesDialog
+        self.push_screen(EditAttributesDialog(self.current_selected_dn, self.conn))
+    
+    def action_manage_groups(self):
+        """Manage groups for selected object."""
+        if not self.current_selected_dn:
+            self.notify("No object selected", severity="warning")
+            return
+        
+        # Determine object type
+        if self.current_selected_label and "👤" in str(self.current_selected_label):
+            from ui.dialogs import ManageGroupsDialog
+            # Need to load user details first
+            from widgets.user_details import UserDetailsPane
+            user_details = UserDetailsPane()
+            user_details.update_user_details(self.current_selected_dn, self.conn)
+            self.push_screen(ManageGroupsDialog(self.current_selected_dn, self.conn, user_details))
+        elif self.current_selected_label and "👥" in str(self.current_selected_label):
+            from ui.dialogs import ManageGroupMembersDialog
+            from widgets.group_details import GroupDetailsPane
+            group_details = GroupDetailsPane()
+            group_details.update_group_details(self.current_selected_dn, self.conn)
+            self.push_screen(ManageGroupMembersDialog(self.current_selected_dn, self.conn, group_details))
+        else:
+            self.notify("Group management only available for users and groups", severity="warning")
+    
+    def action_set_password(self):
+        """Set password for selected user."""
+        if not self.current_selected_dn:
+            self.notify("No object selected", severity="warning")
+            return
+        
+        if self.current_selected_label and "👤" in str(self.current_selected_label):
+            from ui.dialogs import SetPasswordDialog
+            self.push_screen(SetPasswordDialog(self.current_selected_dn, self.conn))
+        else:
+            self.notify("Password setting only available for users", severity="warning")
 
     def _set_input_prefix(self, prefix: str):
         """Set the input prefix and move cursor to end."""
@@ -198,10 +267,12 @@ class ADTUI(App):
             if value.startswith(":m ") or value.startswith(":move "):
                 prefix_len = 3 if value.startswith(":m ") else 6
                 path_input = value[prefix_len:]
-                self.show_path_autocomplete(path_input)
+                # Trigger autocomplete if ends with / or has content
+                if path_input.endswith('/') or len(path_input) >= 1:
+                    self.show_path_autocomplete(path_input)
             elif self.autocomplete_mode:
                 self.autocomplete_mode = False
-                self.search_results_pane.clear()
+                self.search_results_pane.styles.display = "none"
 
     def on_input_submitted(self, event: Input.Submitted):
         """Handle command submission."""
@@ -241,8 +312,6 @@ class ADTUI(App):
                 self.current_selected_dn = item.data
                 self.current_selected_label = item.text
                 self.details.update_content(item.text, item.data, self.conn)
-                # Try to expand tree to this location
-                self.expand_tree_to_dn(item.data)
 
     def on_list_view_selected(self, event: ListView.Selected):
         """Handle list view selection (Enter key)."""
@@ -256,20 +325,22 @@ class ADTUI(App):
                         # Extract path, preserving spaces
                         path = label.replace('📁 ', '').strip()
                         cmd_input = self.query_one("#command-input", Input)
-                        # Check if path ends with / to continue or complete
-                        if path.endswith('/'):
-                            cmd_input.value = f":m {path}"
-                        else:
-                            cmd_input.value = f":m {path}/"
+                        # Always end with / to show next level
+                        if not path.endswith('/'):
+                            path = path + '/'
+                        cmd_input.value = f":m {path}"
                         cmd_input.cursor_position = len(cmd_input.value)
-                        cmd_input.focus()
-                        self.show_path_autocomplete(path + '/' if not path.endswith('/') else path)
+                        # Trigger next autocomplete
+                        self.show_path_autocomplete(path)
+                        # Keep focus on search results so user can continue navigating
+                        self.set_timer(0.05, lambda: self.search_results_pane.focus())
                 else:
                     # Search result: show details and expand tree
                     self.current_selected_dn = item.data
                     self.current_selected_label = item.text
                     self.details.update_content(item.text, item.data, self.conn)
-                    self.expand_tree_to_dn(item.data)
+                    # Expand tree in background
+                    self.set_timer(0.1, lambda: self.expand_tree_to_dn(item.data))
                     # Hide search results and return focus to tree
                     self.search_results_pane.styles.display = "none"
                     self.adtree.focus()
@@ -360,27 +431,28 @@ class ADTUI(App):
         """Show autocomplete suggestions for paths."""
         self.autocomplete_mode = True
         
-        path_parts = [p.strip() for p in partial_path.split('/') if p.strip()]
-        
-        if path_parts:
-            current_parts = path_parts[:-1]
+        # Handle case where path ends with / - show all children
+        if partial_path.endswith('/'):
+            path_parts = [p.strip() for p in partial_path.rstrip('/').split('/') if p.strip()]
+            search_prefix = ""
+        else:
+            path_parts = [p.strip() for p in partial_path.split('/') if p.strip()]
             search_prefix = path_parts[-1].lower() if path_parts else ""
-            
-            if current_parts:
-                search_base = self.path_service.path_to_dn('/'.join(current_parts))
-            else:
-                search_base = self.base_dn
+            path_parts = path_parts[:-1]  # Remove last part for search base
+        
+        # Determine search base
+        if path_parts:
+            search_base = self.path_service.path_to_dn('/'.join(path_parts))
         else:
             search_base = self.base_dn
-            search_prefix = ""
         
         try:
             ous = self.ldap_service.search_ous(search_base, search_prefix, limit=50)
             
             suggestions = []
             for ou in ous:
-                if path_parts and len(path_parts) > 1:
-                    full_path = '/'.join(path_parts[:-1]) + '/' + ou['name']
+                if path_parts:
+                    full_path = '/'.join(path_parts) + '/' + ou['name']
                 else:
                     full_path = ou['name']
                 
@@ -393,9 +465,15 @@ class ADTUI(App):
             if suggestions:
                 self.search_results_pane.populate(suggestions, self.conn)
                 self.search_results_pane.styles.display = "block"
+                # Auto focus if requested
+                if len(suggestions) == 1 and not search_prefix:
+                    # If only one result and we're at /, could auto-select
+                    pass
             else:
                 self.search_results_pane.clear()
-        except Exception:
+                self.search_results_pane.styles.display = "none"
+        except Exception as e:
+            print(f"Autocomplete error: {e}")
             pass
 
     # ==================== Delete Operations ====================

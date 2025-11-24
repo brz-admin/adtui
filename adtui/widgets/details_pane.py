@@ -17,9 +17,9 @@ class DetailsPane(Static):
     """
     
     BINDINGS = [
-        Binding("e", "edit_object", "Edit", show=True),
-        Binding("g", "manage_groups", "Groups", show=True),
         Binding("a", "view_attributes", "Attributes", show=True),
+        Binding("g", "manage_groups", "Groups", show=True),
+        Binding("p", "set_password", "Password", show=True),
     ]
     
     def __init__(self, *args, **kwargs):
@@ -64,19 +64,17 @@ class DetailsPane(Static):
             self.update(f"Details for: {item_label}\n\n[Unsupported object type]")
 
     
-    def action_edit_object(self):
-        """Handle edit action."""
+    def action_set_password(self):
+        """Handle set password action."""
         if not self.current_dn:
             self.app.notify("No object selected", severity="warning")
             return
         
         if self.current_type == "user":
-            from ui.dialogs import EditUserDialog
-            self.app.push_screen(EditUserDialog(self.current_dn, self.current_conn, self.user_details))
-        elif self.current_type == "group":
-            self.app.notify("Group editing not yet implemented", severity="information")
+            from ui.dialogs import SetPasswordDialog
+            self.app.push_screen(SetPasswordDialog(self.current_dn, self.current_conn))
         else:
-            self.app.notify("Editing not supported for this object type", severity="warning")
+            self.app.notify("Password setting only available for users", severity="warning")
     
     def action_manage_groups(self):
         """Handle group management action."""
@@ -94,41 +92,13 @@ class DetailsPane(Static):
             self.app.notify("Group management not supported for this object type", severity="warning")
     
     def action_view_attributes(self):
-        """Handle view all attributes action."""
+        """Handle view all attributes action - opens editable dialog."""
         if not self.current_dn:
             self.app.notify("No object selected", severity="warning")
             return
         
-        if self.current_type == "user" and self.user_details:
-            content = self.user_details.get_raw_attributes_text()
-            self.update(content)
-        else:
-            # For any object, show raw LDAP attributes
-            try:
-                self.current_conn.search(
-                    self.current_dn,
-                    '(objectClass=*)',
-                    search_scope='BASE',
-                    attributes=['*']
-                )
-                if self.current_conn.entries:
-                    entry = self.current_conn.entries[0]
-                    lines = ["[bold cyan]Raw LDAP Attributes[/bold cyan]\n"]
-                    for attr in sorted(entry.entry_attributes_as_dict.keys()):
-                        values = entry.entry_attributes_as_dict[attr]
-                        if isinstance(values, list) and len(values) == 1:
-                            lines.append(f"[bold]{attr}:[/bold] {values[0]}")
-                        elif isinstance(values, list):
-                            lines.append(f"[bold]{attr}:[/bold]")
-                            for val in values:
-                                lines.append(f"  • {val}")
-                        else:
-                            lines.append(f"[bold]{attr}:[/bold] {values}")
-                    self.update("\n".join(lines))
-                else:
-                    self.app.notify("Could not load attributes", severity="error")
-            except Exception as e:
-                self.app.notify(f"Error loading attributes: {e}", severity="error")
+        from ui.dialogs import EditAttributesDialog
+        self.app.push_screen(EditAttributesDialog(self.current_dn, self.current_conn))
 
     def _show_user_details(self, dn, conn):
         """Display user details with tabs."""

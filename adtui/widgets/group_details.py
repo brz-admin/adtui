@@ -121,7 +121,7 @@ DN: {self.group_dn}
         else:
             content += "  Not a member of any group\n"
         
-        content += "\n[dim]Press 'g' to manage members | 'a' to view all attributes[/dim]"
+        content += "\n[dim]Press 'a' to edit attributes | 'g' to view members[/dim]"
         
         return content
 

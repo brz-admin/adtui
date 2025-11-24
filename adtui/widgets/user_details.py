@@ -163,7 +163,7 @@ Password Last Set: {pwd_last_set}
         else:
             content += "  No group memberships\n"
         
-        content += "\n[dim]Press 'e' to edit | 'g' to manage groups | 'a' to view all attributes[/dim]"
+        content += "\n[dim]Press 'a' to edit attributes | 'g' to manage groups | 'p' to set password[/dim]"
         
         return content
 

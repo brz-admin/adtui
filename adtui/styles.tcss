@@ -51,8 +51,12 @@ ScrollableContainer {
     height: 100%;
 }
 
-Input {
+#command-input {
     dock: bottom;
+    height: 3;
+}
+
+Input {
     height: 3;
 }
 
@@ -96,7 +100,36 @@ Footer {
     min-width: 16;
 }
 
-ConfirmDeleteScreen, ConfirmMoveScreen {
+/* Center all modal dialogs */
+ModalScreen {
     align: center middle;
+}
+
+#dialog {
+    width: 80;
+    max-height: 40;
+}
+
+/* Scrollable lists in dialogs */
+#groups-list, #members-list, #attributes-list {
+    height: 20;
+    border: solid $primary;
+}
+
+ListView {
+    scrollbar-gutter: stable;
+}
+
+ListView > ListItem {
+    padding: 0 1;
+}
+
+ListView:focus > ListItem.--highlight {
+    background: $accent;
+}
+
+/* Edit dialog inputs */
+EditUserDialog Input, EditAttributesDialog Input {
+    margin: 1;
 }
 

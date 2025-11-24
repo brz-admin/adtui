@@ -109,6 +109,8 @@ class CommandHandler:
             results = self.app.ldap_service.search_objects(query)
             self.app.search_results_pane.populate(results, self.app.conn)
             self.app.search_results_pane.styles.display = "block"
+            # Focus the search results
+            self.app.search_results_pane.focus()
         except Exception as e:
             self.app.notify(f"Error searching AD: {e}", severity=Severity.ERROR.value)
     
