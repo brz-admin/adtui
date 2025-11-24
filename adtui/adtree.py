@@ -59,7 +59,13 @@ class ADTree(Tree):
             # Use a thread to prevent UI freezing
             threading.Thread(target=self.populate_ou, args=(node, node.data)).start()
 
-    def populate_ou(self, parent_node, ou_dn):
+    def ensure_node_loaded(self, node):
+        """Ensure a node's contents are loaded synchronously."""
+        if node.data and node.data not in self.loaded_ous:
+            self.loaded_ous.add(node.data)
+            self.populate_ou_sync(node, node.data)
+
+    def populate_ou(self, parent_node, ou_dn, synchronous=False):
         """Populate an OU with its contents."""
         try:
             # Check cache first
@@ -109,6 +115,10 @@ class ADTree(Tree):
 
         except Exception as e:
             print(f"Error populating OU {ou_dn}: {e}")
+
+    def populate_ou_sync(self, parent_node, ou_dn):
+        """Synchronously populate an OU for navigation purposes."""
+        self.populate_ou(parent_node, ou_dn, synchronous=True)
 
     def _populate_from_cache(self, parent_node, ou_dn):
         """Populate from cached results."""

@@ -51,7 +51,20 @@ def get_ldap_connection(username: str, password: str) -> Connection:
     port = 636 if USE_SSL else 389
     server = Server(LDAP_SERVER, port=port, use_ssl=USE_SSL, get_info=ALL)
     try:
-        return Connection(server, user=bind_dn, password=password, auto_bind=True)
+        # For password operations, AD requires SSL/TLS
+        if not USE_SSL:
+            print("WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini")
+        
+        conn = Connection(server, user=bind_dn, password=password, auto_bind=True)
+        
+        # Test if we can perform password operations
+        if USE_SSL:
+            # Connection is ready for password operations
+            pass
+        else:
+            print("INFO: Connected without SSL. Password operations will be disabled.")
+        
+        return conn
     except Exception as e:
         print(f"Failed to connect: {e}")
         raise
@@ -378,6 +391,9 @@ class ADTUI(App):
                 if not current_node.is_expanded:
                     current_node.expand()
                 
+                # Ensure node contents are loaded synchronously
+                self.adtree.ensure_node_loaded(current_node)
+                
                 # Find the child with this OU name
                 found = False
                 for child in current_node.children:
@@ -397,8 +413,10 @@ class ADTUI(App):
             if current_node and current_node != self.adtree.root:
                 if not current_node.is_expanded:
                     current_node.expand()
-                    # Give it a moment to load
-                    self.set_timer(0.2, lambda: self._select_object_in_tree(current_node, dn))
+                    # Ensure final node is loaded
+                    self.adtree.ensure_node_loaded(current_node)
+                    # Select object immediately since loading is synchronous
+                    self._select_object_in_tree(current_node, dn)
                 else:
                     self._select_object_in_tree(current_node, dn)
         
@@ -600,6 +618,31 @@ class ADTUI(App):
         else:
             self.notify(f"Failed to undo: {message}", severity=Severity.ERROR.value)
 
+
+
+    def handle_unlock_confirmation(self, confirmed: bool):
+        """Handle unlock confirmation result."""
+        if confirmed and self.current_selected_dn:
+            try:
+                success, message = self.ldap_service.unlock_user_account(self.current_selected_dn)
+                if success:
+                    self.notify(message, severity=Severity.INFORMATION.value)
+                    # Refresh the current view
+                    self.refresh_current_view()
+                else:
+                    self.notify(message, severity=Severity.ERROR.value)
+            except Exception as e:
+                self.notify(f"Error unlocking account: {e}", severity=Severity.ERROR.value)
+
+    def refresh_current_view(self):
+        """Refresh the currently displayed view."""
+        if hasattr(self.details, "current_widget") and self.details.current_widget:
+            # Refresh user details if showing
+            if hasattr(self.details.current_widget, "load_user_details"):
+                self.details.current_widget.load_user_details()
+        else:
+            # Otherwise refresh the tree
+            self.action_refresh_ou()
 
 def main():
     """Main entry point for the application."""

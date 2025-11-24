@@ -496,6 +496,38 @@ class EditSingleAttributeDialog(ModalScreen):
             self.dismiss(False)
 
 
+def validate_password_complexity(password: str) -> tuple[bool, list[str]]:
+    """Validate password meets AD complexity requirements.
+    
+    Returns:
+        Tuple of (is_valid: bool, error_messages: list[str])
+    """
+    errors = []
+    
+    # Length check (minimum 8 characters for AD default)
+    if len(password) < 8:
+        errors.append("Password must be at least 8 characters long")
+    
+    # Complexity checks
+    has_upper = any(c.isupper() for c in password)
+    has_lower = any(c.islower() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
+    
+    complexity_count = sum([has_upper, has_lower, has_digit, has_special])
+    if complexity_count < 3:
+        errors.append("Password must contain at least 3 of: uppercase, lowercase, digits, special characters")
+    
+    # Check for common patterns
+    if password.lower() in ["password", "12345678", "qwerty123"]:
+        errors.append("Password is too common")
+    
+    # Check for username inclusion (basic check)
+    # This would need the actual username for proper validation
+    
+    return len(errors) == 0, errors
+
+
 class SetPasswordDialog(ModalScreen):
     """Dialog to set user password."""
     
@@ -503,6 +535,35 @@ class SetPasswordDialog(ModalScreen):
         super().__init__()
         self.dn = dn
         self.conn = conn
+    
+    def _validate_password_complexity(self, password: str) -> bool:
+        """Validate password meets AD complexity requirements."""
+        errors = []
+        
+        # Length check (minimum 8 characters for AD default)
+        if len(password) < 8:
+            errors.append("Password must be at least 8 characters long")
+        
+        # Complexity checks
+        has_upper = any(c.isupper() for c in password)
+        has_lower = any(c.islower() for c in password)
+        has_digit = any(c.isdigit() for c in password)
+        has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
+        
+        complexity_count = sum([has_upper, has_lower, has_digit, has_special])
+        if complexity_count < 3:
+            errors.append("Password must contain at least 3 of: uppercase, lowercase, digits, special characters")
+        
+        # Check for common patterns
+        if password.lower() in ["password", "12345678", "qwerty123"]:
+            errors.append("Password is too common")
+        
+        if errors:
+            error_msg = "Password requirements not met:\n" + "\n".join(f"• {error}" for error in errors)
+            self.app.notify(error_msg, severity="warning")
+            return False
+        
+        return True
     
     def compose(self) -> ComposeResult:
         cn = self.dn.split(',')[0].split('=')[1] if ',' in self.dn else self.dn
@@ -550,23 +611,51 @@ class SetPasswordDialog(ModalScreen):
                     self.app.notify("Password must be at least 8 characters", severity="warning")
                     return
                 
-                # Set password using ldap3
-                from ldap3 import MODIFY_REPLACE
+                # Set password using ldap3 Microsoft extension for Active Directory
+                # Check if connection is secure (required for password operations)
+                if not self.conn.server.ssl:
+                    self.app.notify("Password changes require SSL/TLS connection. Enable use_ssl in config.ini", severity="error")
+                    return
                 
-                # Encode password for AD (must be in quotes and UTF-16-LE)
-                password_value = f'"{pwd1}"'.encode('utf-16-le')
+                # Validate password complexity for AD
+                is_valid, errors = validate_password_complexity(pwd1)
+                if not is_valid:
+                    error_msg = "Password requirements not met:\n" + "\n".join(f"• {error}" for error in errors)
+                    self.app.notify(error_msg, severity="warning")
+                    return
                 
-                result = self.conn.modify(self.dn, {'unicodePwd': [(MODIFY_REPLACE, [password_value])]})
+                # Use Microsoft extension for password modification (handles encoding automatically)
+                result = self.conn.extend.microsoft.modify_password(self.dn, pwd1)
                 
                 if result and self.conn.result['result'] == 0:
                     self.app.notify("Password updated successfully", severity="information")
                     self.dismiss(True)
                 else:
                     error_msg = self.conn.result.get('message', 'Unknown error')
-                    self.app.notify(f"Failed to set password: {error_msg}", severity="error")
+                    error_desc = self.conn.result.get('description', 'No description')
+                    
+                    # Provide more helpful error messages
+                    if "insufficient rights" in str(error_msg).lower():
+                        self.app.notify("Failed: Insufficient rights. Need password reset permissions.", severity="error")
+                    elif "constraint violation" in str(error_desc).lower():
+                        self.app.notify("Failed: Password doesn't meet complexity requirements.", severity="error")
+                    else:
+                        self.app.notify(f"Failed to set password: {error_msg}", severity="error")
             except Exception as e:
                 self.app.notify(f"Error setting password: {e}", severity="error")
                 import traceback
                 traceback.print_exc()
         else:
             self.dismiss(False)
+
+
+class ConfirmUnlockDialog(BaseConfirmDialog):
+    """Dialog to confirm user account unlock."""
+    
+    def __init__(self, label: str, dn: str):
+        super().__init__(
+            title="[bold red]⚠ Unlock Account[/bold red]",
+            message=f"Are you sure you want to unlock this account?\n\n{label}\n\nDN: {dn}\n\n[yellow]This will reset the lockout counter and allow login attempts.[/yellow]",
+            confirm_text="Unlock",
+            confirm_variant="error"
+        )
