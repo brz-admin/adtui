@@ -41,9 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://gitea.brznet.fr/brz/adtui"
-Repository = "https://gitea.brznet.fr/brz/adtui"
-"Bug Tracker" = "https://github.com/yourusername/adtui/issues"
+Homepage = "https://git.brznet.fr/brz/adtui"
+Repository = "https://git.brznet.fr/brz/adtui"
+"Bug Tracker" = "https://git.brznet.fr/brz/adtui/issues"
 
 [project.scripts]
 adtui = "adtui:main"

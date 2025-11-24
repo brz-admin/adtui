@@ -75,7 +75,7 @@ pip install adtui
 git init
 git add .
 git commit -m "Initial commit - ADTUI v2.0.0"
-git remote add origin https://github.com/yourusername/adtui.git
+git remote add origin https://git.brznet.fr/brz/adtui.git
 git push -u origin main
 ```
 

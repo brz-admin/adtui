@@ -350,7 +350,7 @@ MIT License - see LICENSE file for details
 
 For issues, questions, or contributions:
 
-- Issues: https://servgitea.domman.ad/ti2103/adtui/issues
+- Issues: https://git.brznet.fr/brz/adtui/issues
 
 ## Credits
 
