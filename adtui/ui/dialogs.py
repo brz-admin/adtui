@@ -3,7 +3,7 @@
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
-from textual.widgets import Static, Button, Input, ListView, ListItem, Label
+from textual.widgets import Static, Button, Input, ListView, ListItem, Label, Checkbox
 import unicodedata
 
 
@@ -659,3 +659,270 @@ class ConfirmUnlockDialog(BaseConfirmDialog):
             confirm_text="Unlock",
             confirm_variant="error"
         )
+
+
+class CreateUserDialog(ModalScreen):
+    """Dialog to create a new user account."""
+    
+    def __init__(self, target_ou: str, ldap_service):
+        super().__init__()
+        self.target_ou = target_ou
+        self.ldap_service = ldap_service
+    
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(f"[bold green]Create New User Account[/bold green]\n"),
+            Static(f"Target OU: [cyan]{self.target_ou}[/cyan]\n"),
+            
+            Input(placeholder="Full Name*", id="full-name"),
+            Input(placeholder="First Name (optional)", id="first-name"),
+            Input(placeholder="Last Name (optional)", id="last-name"),
+            Input(placeholder="User Logon Name*", id="samaccount"),
+            
+            Static("\n[bold]Password:[/bold]"),
+            Input(placeholder="Password*", password=True, id="password1"),
+            Input(placeholder="Confirm Password*", password=True, id="password2"),
+            
+            Static("\n[bold]Account Options:[/bold]"),
+            Checkbox("User must change password at next logon", id="must-change", value=True),
+            Checkbox("User cannot change password", id="cannot-change"),
+            Checkbox("Password never expires", id="never-expires"),
+            Checkbox("Account is disabled", id="disabled"),
+            
+            Horizontal(
+                Static("Account expires (YYYY-MM-DD, optional):"),
+                Input(placeholder="", id="account-expires"),
+            ),
+            
+            Horizontal(
+                Button("Create", variant="success", id="create"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-buttons"
+            ),
+            id="dialog"
+        )
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "create":
+            self._create_user()
+        else:
+            self.dismiss(None)
+    
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Auto-generate sAMAccountName when full name changes."""
+        if event.input.id == "full-name" and not self.query_one("#samaccount", Input).value:
+            full_name = event.value.strip()
+            if full_name:
+                samaccount = self.ldap_service.generate_samaccount_name(full_name)
+                self.query_one("#samaccount", Input).value = samaccount
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Validate sAMAccountName availability."""
+        if event.input.id == "samaccount":
+            samaccount = event.value.strip()
+            if samaccount:
+                available, message = self.ldap_service.check_samaccount_availability(samaccount)
+                if not available:
+                    self.app.notify(message, severity="warning")
+    
+    def _create_user(self):
+        """Create the user account."""
+        try:
+            # Get form values
+            full_name = self.query_one("#full-name", Input).value.strip()
+            first_name = self.query_one("#first-name", Input).value.strip()
+            last_name = self.query_one("#last-name", Input).value.strip()
+            samaccount = self.query_one("#samaccount", Input).value.strip()
+            password1 = self.query_one("#password1", Input).value
+            password2 = self.query_one("#password2", Input).value
+            
+            # Validate required fields
+            if not full_name:
+                self.app.notify("Full Name is required", severity="warning")
+                return
+            if not samaccount:
+                self.app.notify("User Logon Name is required", severity="warning")
+                return
+            if not password1:
+                self.app.notify("Password is required", severity="warning")
+                return
+            if password1 != password2:
+                self.app.notify("Passwords do not match", severity="warning")
+                return
+            
+            # Validate password complexity
+            is_valid, errors = validate_password_complexity(password1)
+            if not is_valid:
+                error_msg = "Password requirements not met:\n" + "\n".join(f"• {error}" for error in errors)
+                self.app.notify(error_msg, severity="warning")
+                return
+            
+            # Get account options
+            must_change = self.query_one("#must-change", Checkbox).value
+            cannot_change = self.query_one("#cannot-change", Checkbox).value
+            never_expires = self.query_one("#never-expires", Checkbox).value
+            disabled = self.query_one("#disabled", Checkbox).value
+            account_expires = self.query_one("#account-expires", Input).value.strip()
+            
+            # Create user
+            success, message, user_dn = self.ldap_service.create_user(
+                full_name=full_name,
+                samaccount=samaccount,
+                password=password1,
+                ou_dn=self.target_ou,
+                first_name=first_name,
+                last_name=last_name,
+                user_must_change_password=must_change,
+                user_cannot_change_password=cannot_change,
+                password_never_expires=never_expires,
+                account_disabled=disabled,
+                account_expires=account_expires if account_expires else ""
+            )
+            
+            if success:
+                self.app.notify(message, severity="information")
+                self.dismiss({
+                    'success': True,
+                    'message': message,
+                    'user_dn': user_dn,
+                    'full_name': full_name,
+                    'samaccount': samaccount
+                })
+            else:
+                self.app.notify(message, severity="error")
+        
+        except Exception as e:
+            self.app.notify(f"Error creating user: {e}", severity="error")
+
+
+class CopyUserDialog(ModalScreen):
+    """Dialog to copy an existing user account."""
+    
+    def __init__(self, source_dn: str, source_label: str, target_ou: str, ldap_service):
+        super().__init__()
+        self.source_dn = source_dn
+        self.source_label = source_label
+        self.target_ou = target_ou
+        self.ldap_service = ldap_service
+    
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(f"[bold green]Copy User Account[/bold green]\n"),
+            Static(f"Source User: [cyan]{self.source_label}[/cyan]"),
+            Static(f"Target OU: [cyan]{self.target_ou}[/cyan]\n"),
+            
+            Input(placeholder="New Full Name*", id="full-name"),
+            Input(placeholder="New User Logon Name*", id="samaccount"),
+            
+            Static("\n[bold]Password:[/bold]"),
+            Input(placeholder="Password*", password=True, id="password1"),
+            Input(placeholder="Confirm Password*", password=True, id="password2"),
+            
+            Static("\n[bold]Copy Options:[/bold]"),
+            Checkbox("Copy group memberships", id="copy-groups"),
+            Checkbox("Copy account options (password settings, disabled status)", id="copy-options"),
+            Checkbox("Copy manager relationship", id="copy-manager"),
+            
+            Static("\n[bold]Account Options:[/bold]"),
+            Checkbox("User must change password at next logon", id="must-change", value=True),
+            Checkbox("User cannot change password", id="cannot-change"),
+            Checkbox("Password never expires", id="never-expires"),
+            Checkbox("Account is disabled", id="disabled"),
+            
+            Horizontal(
+                Static("Account expires (YYYY-MM-DD, optional):"),
+                Input(placeholder="", id="account-expires"),
+            ),
+            
+            Horizontal(
+                Button("Copy", variant="success", id="copy"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-buttons"
+            ),
+            id="dialog"
+        )
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy":
+            self._copy_user()
+        else:
+            self.dismiss(None)
+    
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Auto-generate sAMAccountName when full name changes."""
+        if event.input.id == "full-name" and not self.query_one("#samaccount", Input).value:
+            full_name = event.value.strip()
+            if full_name:
+                samaccount = self.ldap_service.generate_samaccount_name(full_name)
+                self.query_one("#samaccount", Input).value = samaccount
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Validate sAMAccountName availability."""
+        if event.input.id == "samaccount":
+            samaccount = event.value.strip()
+            if samaccount:
+                available, message = self.ldap_service.check_samaccount_availability(samaccount)
+                if not available:
+                    self.app.notify(message, severity="warning")
+    
+    def _copy_user(self):
+        """Copy the user account."""
+        try:
+            # Get form values
+            new_full_name = self.query_one("#full-name", Input).value.strip()
+            new_samaccount = self.query_one("#samaccount", Input).value.strip()
+            password1 = self.query_one("#password1", Input).value
+            password2 = self.query_one("#password2", Input).value
+            
+            # Validate required fields
+            if not new_full_name:
+                self.app.notify("New Full Name is required", severity="warning")
+                return
+            if not new_samaccount:
+                self.app.notify("New User Logon Name is required", severity="warning")
+                return
+            if not password1:
+                self.app.notify("Password is required", severity="warning")
+                return
+            if password1 != password2:
+                self.app.notify("Passwords do not match", severity="warning")
+                return
+            
+            # Validate password complexity
+            is_valid, errors = validate_password_complexity(password1)
+            if not is_valid:
+                error_msg = "Password requirements not met:\n" + "\n".join(f"• {error}" for error in errors)
+                self.app.notify(error_msg, severity="warning")
+                return
+            
+            # Get copy options
+            copy_groups = self.query_one("#copy-groups", Checkbox).value
+            copy_manager = self.query_one("#copy-manager", Checkbox).value
+            copy_options = self.query_one("#copy-options", Checkbox).value
+            
+            # Copy user
+            success, message, user_dn = self.ldap_service.copy_user(
+                source_dn=self.source_dn,
+                new_full_name=new_full_name,
+                new_samaccount=new_samaccount,
+                password=password1,
+                target_ou_dn=self.target_ou,
+                copy_groups=copy_groups,
+                copy_manager=copy_manager,
+                copy_account_options=copy_options
+            )
+            
+            if success:
+                self.app.notify(message, severity="information")
+                self.dismiss({
+                    'success': True,
+                    'message': message,
+                    'user_dn': user_dn,
+                    'full_name': new_full_name,
+                    'samaccount': new_samaccount
+                })
+            else:
+                self.app.notify(message, severity="error")
+        
+        except Exception as e:
+            self.app.notify(f"Error copying user: {e}", severity="error")

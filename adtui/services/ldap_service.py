@@ -23,6 +23,8 @@ class LDAPService:
         """
         self.conn = connection
         self.base_dn = base_dn
+        # Extract domain from base_dn for UPN generation
+        self.domain = base_dn.replace('DC=', '').replace(',', '.')
     
     def search_objects(self, query: str, object_types: Optional[List[str]] = None) -> List[Dict]:
         """Search for AD objects by cn or sAMAccountName.
@@ -420,3 +422,262 @@ class LDAPService:
                 
         except Exception as e:
             return False, f"Error unlocking account: {e}"
+
+    def check_samaccount_availability(self, samaccount: str, base_dn: str = "") -> Tuple[bool, str]:
+        """Check if sAMAccountName is available.
+        
+        Args:
+            samaccount: The sAMAccountName to check
+            base_dn: Base DN to search in (optional)
+            
+        Returns:
+            Tuple of (available: bool, message: str)
+        """
+        try:
+            search_base = base_dn if base_dn else self.base_dn
+            self.conn.search(
+                search_base,
+                f'(sAMAccountName={samaccount})',
+                search_scope='SUBTREE',
+                attributes=['sAMAccountName', 'distinguishedName']
+            )
+            
+            if self.conn.entries:
+                existing_dn = self.conn.entries[0].distinguishedName.value
+                return False, f"sAMAccountName '{samaccount}' already exists: {existing_dn}"
+            
+            return True, "sAMAccountName is available"
+            
+        except Exception as e:
+            return False, f"Error checking sAMAccountName availability: {e}"
+
+    def generate_samaccount_name(self, full_name: str, base_dn: str = "") -> str:
+        """Generate a unique sAMAccountName from full name.
+        
+        Args:
+            full_name: Full name of the user
+            base_dn: Base DN to check uniqueness in
+            
+        Returns:
+            Unique sAMAccountName
+        """
+        import re
+        
+        # Split full name into parts
+        name_parts = full_name.strip().split()
+        if len(name_parts) == 0:
+            return "user"
+        
+        # Generate base sAMAccountName
+        if len(name_parts) == 1:
+            base_sam = name_parts[0].lower()
+        elif len(name_parts) == 2:
+            first, last = name_parts
+            base_sam = f"{first[0].lower()}{last.lower()}"
+        else:
+            first, last = name_parts[0], name_parts[-1]
+            base_sam = f"{first[0].lower()}{last.lower()}"
+        
+        # Clean up special characters
+        base_sam = re.sub(r'[^a-zA-Z0-9]', '', base_sam)
+        
+        # Check availability and add number if needed
+        samaccount = base_sam
+        counter = 1
+        while True:
+            available, _ = self.check_samaccount_availability(samaccount, base_dn if base_dn else "")
+            if available:
+                break
+            samaccount = f"{base_sam}{counter}"
+            counter += 1
+            
+        return samaccount
+
+    def create_user(self, full_name: str, samaccount: str, password: str, ou_dn: str,
+                   first_name: str = "", last_name: str = "", 
+                   user_must_change_password: bool = True,
+                   user_cannot_change_password: bool = False,
+                   password_never_expires: bool = False,
+                   account_disabled: bool = False,
+                   account_expires: str = "") -> Tuple[bool, str, str]:
+        """Create a new user account.
+        
+        Args:
+            full_name: Full name (CN)
+            samaccount: sAMAccountName
+            password: Initial password
+            ou_dn: Target OU DN
+            first_name: Given name (optional)
+            last_name: Surname (optional)
+            user_must_change_password: User must change password at next logon
+            user_cannot_change_password: User cannot change password
+            password_never_expires: Password never expires
+            account_disabled: Account is disabled
+            account_expires: Account expiry date (optional)
+            
+        Returns:
+            Tuple of (success: bool, message: str, user_dn: str)
+        """
+        try:
+            # Validate required fields
+            if not full_name.strip():
+                return False, "Full name is required", ""
+            if not samaccount.strip():
+                return False, "User logon name is required", ""
+            if not password.strip():
+                return False, "Password is required", ""
+            
+            # Check sAMAccountName availability
+            available, message = self.check_samaccount_availability(samaccount)
+            if not available:
+                return False, message, ""
+            
+            # Generate user DN
+            user_dn = f"cn={full_name},{ou_dn}"
+            
+            # Calculate userAccountControl flags
+            uac = 0x200  # NORMAL_ACCOUNT
+            if account_disabled:
+                uac |= 0x2  # ACCOUNTDISABLE
+            if user_cannot_change_password:
+                uac |= 0x40  # PASSWD_CANT_CHANGE
+            if password_never_expires:
+                uac |= 0x10000  # DONT_EXPIRE_PASSWORD
+            if user_must_change_password:
+                uac |= 0x200  # NORMAL_ACCOUNT (already set)
+            
+            # Prepare attributes
+            attributes = {
+                'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
+                'cn': full_name,
+                'sAMAccountName': samaccount,
+                'userAccountControl': str(uac),
+                'unicodePwd': f'"{password}"'.encode('utf-16-le'),
+                'userPrincipalName': f"{samaccount}@{self.domain}"
+            }
+            
+            # Add optional attributes
+            if first_name:
+                attributes['givenName'] = first_name
+            if last_name:
+                attributes['sn'] = last_name
+            
+            # Handle account expiry
+            if account_expires and account_expires.strip():
+                try:
+                    # Convert date to Windows FILETIME
+                    expiry_date = datetime.strptime(account_expires, '%Y-%m-%d')
+                    # Convert to FILETIME (100-nanosecond intervals since 1601-01-01)
+                    filetime = (expiry_date - datetime(1601, 1, 1)).total_seconds() * 10000000
+                    attributes['accountExpires'] = str(int(filetime))
+                except ValueError:
+                    return False, "Invalid account expiry date format. Use YYYY-MM-DD", ""
+            
+            # Create the user
+            result = self.conn.add(user_dn, attributes=attributes)
+            
+            if not result:
+                error_msg = self.conn.result.get('message', 'Unknown error')
+                return False, f"Failed to create user: {error_msg}", ""
+            
+            # If user must change password at next logon, set pwdLastSet to 0
+            if user_must_change_password:
+                self.conn.modify(user_dn, {'pwdLastSet': [(MODIFY_REPLACE, ['0'])]})
+            
+            return True, f"Successfully created user: {full_name}", user_dn
+            
+        except Exception as e:
+            return False, f"Error creating user: {e}", ""
+
+    def copy_user(self, source_dn: str, new_full_name: str, new_samaccount: str, 
+                 password: str, target_ou_dn: str, copy_groups: bool = False,
+                 copy_manager: bool = False, copy_account_options: bool = False) -> Tuple[bool, str, str]:
+        """Copy an existing user account.
+        
+        Args:
+            source_dn: Source user DN
+            new_full_name: New user's full name
+            new_samaccount: New user's sAMAccountName
+            password: New user's password
+            target_ou_dn: Target OU DN
+            copy_groups: Copy group memberships
+            copy_manager: Copy manager relationship
+            copy_account_options: Copy account options
+            
+        Returns:
+            Tuple of (success: bool, message: str, new_user_dn: str)
+        """
+        try:
+            # Get source user information
+            self.conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
+                          attributes=['givenName', 'sn', 'description', 'department', 
+                                   'company', 'title', 'manager', 'userAccountControl'])
+            
+            if not self.conn.entries:
+                return False, "Source user not found", ""
+            
+            source_entry = self.conn.entries[0]
+            
+            # Extract source attributes
+            first_name = str(source_entry.givenName.value) if hasattr(source_entry, 'givenName') else ""
+            last_name = str(source_entry.sn.value) if hasattr(source_entry, 'sn') else ""
+            
+            # Determine account options from source if requested
+            user_must_change_password = True  # Default for new users
+            user_cannot_change_password = False
+            password_never_expires = False
+            account_disabled = False
+            
+            if copy_account_options and hasattr(source_entry, 'userAccountControl'):
+                source_uac = int(source_entry.userAccountControl.value)
+                user_cannot_change_password = (source_uac & 0x40) != 0
+                password_never_expires = (source_uac & 0x10000) != 0
+                account_disabled = (source_uac & 0x2) != 0
+            
+            # Create the new user
+            success, message, new_user_dn = self.create_user(
+                new_full_name, new_samaccount, password, target_ou_dn,
+                first_name, last_name, user_must_change_password,
+                user_cannot_change_password, password_never_expires, account_disabled
+            )
+            
+            if not success:
+                return False, message, ""
+            
+            # Copy group memberships if requested
+            if copy_groups:
+                try:
+                    # Get source user's groups
+                    self.conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
+                                  attributes=['memberOf'])
+                    
+                    if hasattr(source_entry, 'memberOf'):
+                        groups_to_add = []
+                        for group_dn in source_entry.memberOf.values:
+                            # Try to add user to each group
+                            try:
+                                result = self.conn.modify(group_dn, {'member': [(MODIFY_ADD, [new_user_dn])]})
+                                if result:
+                                    groups_to_add.append(group_dn)
+                            except:
+                                continue  # Skip groups we can't add to
+                        
+                        if groups_to_add:
+                            message += f" Copied to {len(groups_to_add)} groups."
+                
+                except Exception as e:
+                    message += f" Warning: Could not copy group memberships: {e}"
+            
+            # Copy manager if requested
+            if copy_manager and hasattr(source_entry, 'manager'):
+                try:
+                    manager_dn = str(source_entry.manager.value)
+                    self.conn.modify(new_user_dn, {'manager': [(MODIFY_REPLACE, [manager_dn])]})
+                    message += " Manager copied."
+                except Exception as e:
+                    message += f" Warning: Could not copy manager: {e}"
+            
+            return True, message, new_user_dn
+            
+        except Exception as e:
+            return False, f"Error copying user: {e}", ""

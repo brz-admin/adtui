@@ -156,6 +156,11 @@ MESSAGES = {
     'UNLOCK_SUCCESS': "Successfully unlocked user account",
     'UNLOCK_FAILED': "Failed to unlock account: {error}",
     'UNLOCK_USER_ONLY': "Unlock can only be performed on user accounts",
+    'CREATE_USER_SUCCESS': "Successfully created user account",
+    'CREATE_USER_FAILED': "Failed to create user account: {error}",
+    'COPY_USER_SUCCESS': "Successfully copied user account",
+    'COPY_USER_FAILED': "Failed to copy user account: {error}",
+    'NO_TARGET_OU': "No target OU specified or selected",
 }
 
 

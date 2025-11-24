@@ -108,6 +108,8 @@ class ADTUI(App):
         Binding("a", "edit_attributes", "Attributes", show=True),
         Binding("g", "manage_groups", "Groups", show=True),
         Binding("p", "set_password", "Password", show=True),
+        Binding("c", "create_user", "Create User", show=True),
+        Binding("C", "copy_user", "Copy User", show=True),
         Binding("escape", "cancel_command", "Cancel", show=False),
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
     ]
@@ -633,6 +635,143 @@ class ADTUI(App):
                     self.notify(message, severity=Severity.ERROR.value)
             except Exception as e:
                 self.notify(f"Error unlocking account: {e}", severity=Severity.ERROR.value)
+
+    def handle_create_user_confirmation(self, result):
+        """Handle create user confirmation result."""
+        if result and result.get('success'):
+            # Add to history for undo
+            self.history_service.add('create_user', {
+                'user_dn': result['user_dn'],
+                'full_name': result['full_name'],
+                'samaccount': result['samaccount']
+            })
+            
+            # Refresh tree to show new user
+            self.action_refresh_ou()
+            
+            # Navigate to and select new user
+            self.set_timer(0.5, lambda: self.expand_tree_to_dn(result['user_dn']))
+        elif result:
+            # User cancelled dialog
+            pass
+
+    def handle_copy_user_confirmation(self, result):
+        """Handle copy user confirmation result."""
+        if result and result.get('success'):
+            # Add to history for undo
+            self.history_service.add('copy_user', {
+                'user_dn': result['user_dn'],
+                'full_name': result['full_name'],
+                'samaccount': result['samaccount']
+            })
+            
+            # Refresh tree to show new user
+            self.action_refresh_ou()
+            
+            # Navigate to and select new user
+            self.set_timer(0.5, lambda: self.expand_tree_to_dn(result['user_dn']))
+        elif result:
+            # User cancelled dialog
+            pass
+
+    def undo_create_user(self, operation):
+        """Undo create user operation."""
+        try:
+            user_dn = operation.details['user_dn']
+            success, message = self.ldap_service.delete_object(user_dn)
+            
+            if success:
+                self.notify(f"Undid: Created user {operation.details['full_name']}", 
+                           severity=Severity.INFORMATION.value)
+                self.action_refresh_ou()
+            else:
+                self.notify(f"Failed to undo create user: {message}", 
+                           severity=Severity.ERROR.value)
+        except Exception as e:
+            self.notify(f"Error undoing create user: {e}", severity=Severity.ERROR.value)
+
+    def undo_copy_user(self, operation):
+        """Undo copy user operation."""
+        try:
+            user_dn = operation.details['user_dn']
+            success, message = self.ldap_service.delete_object(user_dn)
+            
+            if success:
+                self.notify(f"Undid: Copied user {operation.details['full_name']}", 
+                           severity=Severity.INFORMATION.value)
+                self.action_refresh_ou()
+            else:
+                self.notify(f"Failed to undo copy user: {message}", 
+                           severity=Severity.ERROR.value)
+        except Exception as e:
+            self.notify(f"Error undoing copy user: {e}", severity=Severity.ERROR.value)
+
+    def action_create_user(self):
+        """Create new user account."""
+        from ui.dialogs import CreateUserDialog
+        
+        # Use current selected OU or base DN
+        target_ou = self._get_current_ou()
+        if not target_ou:
+            target_ou = self.ldap_service.base_dn
+        
+        self.push_screen(CreateUserDialog(target_ou, self.ldap_service), 
+                       self.handle_create_user_confirmation)
+
+    def action_copy_user(self):
+        """Copy existing user account."""
+        from ui.dialogs import CopyUserDialog
+        
+        if not self.current_selected_dn:
+            self.notify("No user selected to copy", severity=Severity.WARNING.value)
+            return
+        
+        # Check if selected object is a user
+        if not self._is_user_object(self.current_selected_dn):
+            self.notify("Selected object is not a user", severity=Severity.WARNING.value)
+            return
+        
+        # Use current selected OU as target
+        target_ou = self._get_current_ou()
+        if not target_ou:
+            target_ou = self.ldap_service.base_dn
+        
+        self.push_screen(CopyUserDialog(self.current_selected_dn, 
+                                    str(self.current_selected_label) if self.current_selected_label else "", 
+                                    target_ou, 
+                                    self.ldap_service),
+                       self.handle_copy_user_confirmation)
+
+    def _get_current_ou(self) -> str:
+        """Get currently selected OU DN."""
+        if self.current_selected_dn:
+            # Check if current selection is an OU
+            if self.current_selected_label and "📁" in str(self.current_selected_label):
+                return self.current_selected_dn
+            else:
+                # Get parent OU of selected object
+                dn_parts = self.current_selected_dn.split(',')
+                if len(dn_parts) > 1:
+                    return ','.join(dn_parts[1:])
+        
+        # Fallback to base DN
+        return self.ldap_service.base_dn
+
+    def _is_user_object(self, dn: str) -> bool:
+        """Check if DN represents a user object."""
+        try:
+            self.ldap_service.conn.search(
+                dn,
+                '(objectClass=*)',
+                search_scope='BASE',
+                attributes=['objectClass']
+            )
+            if self.ldap_service.conn.entries:
+                obj_classes = [str(cls).lower() for cls in self.ldap_service.conn.entries[0].objectClass]
+                return 'user' in obj_classes and 'computer' not in obj_classes
+            return False
+        except:
+            return False
 
     def refresh_current_view(self):
         """Refresh the currently displayed view."""

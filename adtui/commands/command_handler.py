@@ -53,6 +53,9 @@ class CommandHandler:
 
             # User management commands
             'unlock': self._handle_unlock,
+            'createuser': self._handle_create_user,
+            'cu': self._handle_create_user,
+            'copyuser': self._handle_copy_user,
             'undo': self._handle_undo,
             'u': self._handle_undo,
             
@@ -223,6 +226,28 @@ class CommandHandler:
                 ConfirmUndoDialog(f"Move back: {last_op.details['object']}"),
                 lambda confirmed: self.app.undo_move(last_op) if confirmed else None
             )
+        elif last_op.type == 'create_user':
+            from ui.dialogs import BaseConfirmDialog
+            self.app.push_screen(
+                BaseConfirmDialog(
+                    title="[bold red]⚠ Undo Create User[/bold red]",
+                    message=f"Are you sure you want to undo creating this user?\n\n{last_op.details['full_name']} ({last_op.details['samaccount']})\n\n[yellow]This will permanently delete the user account.[/yellow]",
+                    confirm_text="Delete",
+                    confirm_variant="error"
+                ),
+                lambda confirmed: self.app.undo_create_user(last_op) if confirmed else None
+            )
+        elif last_op.type == 'copy_user':
+            from ui.dialogs import BaseConfirmDialog
+            self.app.push_screen(
+                BaseConfirmDialog(
+                    title="[bold red]⚠ Undo Copy User[/bold red]",
+                    message=f"Are you sure you want to undo copying this user?\n\n{last_op.details['full_name']} ({last_op.details['samaccount']})\n\n[yellow]This will permanently delete the copied user account.[/yellow]",
+                    confirm_text="Delete",
+                    confirm_variant="error"
+                ),
+                lambda confirmed: self.app.undo_copy_user(last_op) if confirmed else None
+            )
         else:
             self.app.notify(f"Cannot undo operation type: {last_op.type}", severity=Severity.WARNING.value)
     
@@ -239,6 +264,9 @@ class CommandHandler:
 :m <path>        - Move to path with autocomplete
 :move <path>     - Same as :m
  :unlock          - Unlock currently selected locked user account
+:createuser [ou] - Create new user account (uses current OU if not specified)
+:cu [ou]         - Same as :createuser
+:copyuser [source] [ou] - Copy user account (uses current selection if not specified)
 
 [bold]OU Management:[/bold]
 :mkou <path>     - Create new OU at path
@@ -305,3 +333,78 @@ Full LDAP DN also works:
             return False
         except:
             return False
+
+    def _handle_create_user(self, args: str) -> None:
+        """Handle create user command."""
+        from ui.dialogs import CreateUserDialog
+        
+        # Determine target OU
+        if args.strip():
+            # Use specified OU path
+            target_ou = self.app.path_service.resolve_path(args.strip())
+        else:
+            # Use current selected OU
+            target_ou = self._get_current_ou()
+        
+        if not target_ou:
+            self.app.notify("No target OU specified or selected", severity=Severity.WARNING.value)
+            return
+        
+        self.app.push_screen(
+            CreateUserDialog(target_ou, self.app.ldap_service),
+            self.app.handle_create_user_confirmation
+        )
+
+    def _handle_copy_user(self, args: str) -> None:
+        """Handle copy user command."""
+        from ui.dialogs import CopyUserDialog
+        
+        # Parse arguments: [source_dn] [target_ou]
+        parts = args.strip().split(maxsplit=1)
+        
+        if len(parts) == 0:
+            # Use current selected user
+            if not self.app.current_selected_dn:
+                self.app.notify("No user selected to copy", severity=Severity.WARNING.value)
+                return
+            if not self._is_user_object(self.app.current_selected_dn):
+                self.app.notify("Selected object is not a user", severity=Severity.WARNING.value)
+                return
+            
+            source_dn = self.app.current_selected_dn
+            source_label = self.app.current_selected_label
+            target_ou = self._get_current_ou()
+        elif len(parts) == 1:
+            # Source DN specified, use current OU as target
+            source_dn = parts[0]
+            source_label = source_dn.split(',')[0].split('=')[1] if '=' in source_dn else source_dn
+            target_ou = self._get_current_ou()
+        else:
+            # Both source and target specified
+            source_dn = parts[0]
+            source_label = source_dn.split(',')[0].split('=')[1] if '=' in source_dn else source_dn
+            target_ou = self.app.path_service.resolve_path(parts[1])
+        
+        if not target_ou:
+            self.app.notify("Invalid target OU", severity=Severity.WARNING.value)
+            return
+        
+        self.app.push_screen(
+            CopyUserDialog(source_dn, source_label, target_ou, self.app.ldap_service),
+            self.app.handle_copy_user_confirmation
+        )
+
+    def _get_current_ou(self) -> str:
+        """Get the currently selected OU DN."""
+        if self.app.current_selected_dn:
+            # Check if current selection is an OU
+            if self.app.current_selected_label and "📁" in str(self.app.current_selected_label):
+                return self.app.current_selected_dn
+            else:
+                # Get parent OU of selected object
+                dn_parts = self.app.current_selected_dn.split(',')
+                if len(dn_parts) > 1:
+                    return ','.join(dn_parts[1:])
+        
+        # Fallback to base DN
+        return self.app.ldap_service.base_dn
