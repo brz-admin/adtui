@@ -30,17 +30,11 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ## Installation
 
-### From PyPI (when published)
-
-```bash
-pip install adtui
-```
-
 ### From Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/adtui.git
+git clone git@servgitea.domman.ad:ti2103/adtui.git
 cd adtui
 
 # Install dependencies
@@ -48,12 +42,6 @@ pip install -r requirements.txt
 
 # Install the package
 pip install -e .
-```
-
-### Using pipx (Recommended)
-
-```bash
-pipx install adtui
 ```
 
 ## Configuration
@@ -319,8 +307,7 @@ MIT License - see LICENSE file for details
 
 For issues, questions, or contributions:
 
-- GitHub Issues: https://github.com/yourusername/adtui/issues
-- Documentation: https://github.com/yourusername/adtui/wiki
+- Issues: https://servgitea.domman.ad/ti2103/adtui/issues
 
 ## Credits
 
