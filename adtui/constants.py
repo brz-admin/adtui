@@ -152,6 +152,10 @@ MESSAGES = {
     'OU_PATH_REQUIRED': "OU path not specified. Usage: :mkou <path>",
     'TARGET_REQUIRED': "Target OU not specified. Usage: :m <path>",
     'RESTORE_NAME_REQUIRED': "Object name not specified. Usage: :restore <name>",
+    'ACCOUNT_NOT_LOCKED': "Account is not currently locked",
+    'UNLOCK_SUCCESS': "Successfully unlocked user account",
+    'UNLOCK_FAILED': "Failed to unlock account: {error}",
+    'UNLOCK_USER_ONLY': "Unlock can only be performed on user accounts",
 }
 
 

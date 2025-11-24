@@ -50,6 +50,9 @@ class CommandHandler:
             'restore': self._handle_restore,
             
             # History commands
+
+            # User management commands
+            'unlock': self._handle_unlock,
             'undo': self._handle_undo,
             'u': self._handle_undo,
             
@@ -235,6 +238,7 @@ class CommandHandler:
 :d, :del         - Delete the currently selected object
 :m <path>        - Move to path with autocomplete
 :move <path>     - Same as :m
+ :unlock          - Unlock currently selected locked user account
 
 [bold]OU Management:[/bold]
 :mkou <path>     - Create new OU at path
@@ -268,3 +272,36 @@ Full LDAP DN also works:
     def _handle_quit(self, args: str) -> None:
         """Handle quit command."""
         self.app.exit()
+
+    def _handle_unlock(self, args: str) -> None:
+        """Handle unlock command."""
+        if not self.app.current_selected_dn:
+            self.app.notify(MESSAGES['NO_SELECTION'], severity=Severity.WARNING.value)
+            return
+        
+        # Check if selected object is a user
+        if not self._is_user_object(self.app.current_selected_dn):
+            self.app.notify("Unlock can only be performed on user accounts", severity=Severity.WARNING.value)
+            return
+        
+        from ui.dialogs import ConfirmUnlockDialog
+        self.app.push_screen(
+            ConfirmUnlockDialog(self.app.current_selected_label, self.app.current_selected_dn),
+            self.app.handle_unlock_confirmation
+        )
+
+    def _is_user_object(self, dn: str) -> bool:
+        """Check if DN represents a user object."""
+        try:
+            self.app.ldap_service.conn.search(
+                dn,
+                '(objectClass=*)',
+                search_scope='BASE',
+                attributes=['objectClass']
+            )
+            if self.app.ldap_service.conn.entries:
+                obj_classes = [str(cls).lower() for cls in self.app.ldap_service.conn.entries[0].objectClass]
+                return 'user' in obj_classes and 'computer' not in obj_classes
+            return False
+        except:
+            return False

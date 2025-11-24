@@ -231,3 +231,51 @@ Password Last Set: {pwd_last_set}
             print(f"Error leaving group: {e}")
             return False
 
+
+    def unlock_account(self):
+        """Unlock the user account."""
+        try:
+            success, message = self._unlock_account_via_service()
+            if success:
+                print(f"Account unlocked: {message}")
+                self.load_user_details()  # Refresh the display
+            else:
+                print(f"Failed to unlock: {message}")
+            return success
+        except Exception as e:
+            print(f"Error unlocking account: {e}")
+            return False
+
+    def _unlock_account_via_service(self) -> Tuple[bool, str]:
+        """Unlock account using LDAP connection."""
+        try:
+            # Check if account is actually locked first
+            if not self.is_account_locked():
+                return False, "Account is not currently locked"
+            
+            # Unlock by clearing lockoutTime and resetting badPwdCount
+            changes = {
+                'lockoutTime': [(MODIFY_REPLACE, ['0'])],
+                'badPwdCount': [(MODIFY_REPLACE, ['0'])]
+            }
+            
+            self.conn.modify(self.user_dn, changes)
+            
+            if self.conn.result['result'] == 0:
+                return True, "Account successfully unlocked"
+            else:
+                return False, f"Unlock failed: {self.conn.result['message']}"
+        except Exception as e:
+            return False, f"Error unlocking account: {e}"
+
+    def is_account_locked(self) -> bool:
+        """Check if account is currently locked."""
+        if not self.entry:
+            return False
+        
+        # Check lockoutTime attribute
+        if hasattr(self.entry, 'lockoutTime') and self.entry.lockoutTime.value:
+            lockout_time = int(self.entry.lockoutTime.value)
+            return lockout_time != 0
+        
+        return False

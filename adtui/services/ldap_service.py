@@ -372,3 +372,51 @@ class LDAPService:
             return ObjectIcon.OU.value
         else:
             return ObjectIcon.GENERIC.value
+
+    def unlock_user_account(self, user_dn: str) -> Tuple[bool, str]:
+        """Unlock a locked user account.
+        
+        Args:
+            user_dn: User Distinguished Name
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            # Get current lockoutTime to check if account is actually locked
+            self.conn.search(
+                user_dn,
+                '(objectClass=user)',
+                search_scope='BASE',
+                attributes=['lockoutTime', 'badPwdCount']
+            )
+            
+            if not self.conn.entries:
+                return False, "User not found"
+                
+            entry = self.conn.entries[0]
+            
+            # Check if account is actually locked
+            lockout_time = 0
+            if hasattr(entry, 'lockoutTime') and entry.lockoutTime.value:
+                lockout_time = int(entry.lockoutTime.value)
+            
+            # 0 means not locked
+            if lockout_time == 0:
+                return False, "Account is not currently locked"
+            
+            # Unlock by clearing lockoutTime and resetting badPwdCount
+            changes = {
+                'lockoutTime': [(MODIFY_REPLACE, ['0'])],
+                'badPwdCount': [(MODIFY_REPLACE, ['0'])]
+            }
+            
+            self.conn.modify(user_dn, changes)
+            
+            if self.conn.result['result'] == 0:
+                return True, "Successfully unlocked user account"
+            else:
+                return False, f"Failed to unlock account: {self.conn.result['message']}"
+                
+        except Exception as e:
+            return False, f"Error unlocking account: {e}"
