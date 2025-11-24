@@ -6,5 +6,8 @@ ldap3>=2.9.1
 # Terminal UI framework
 textual>=0.40.0
 
+# Enhanced input handling
+prompt-toolkit>=3.0.0
+
 # Configuration file parsing (built-in, but listed for documentation)
 # configparser

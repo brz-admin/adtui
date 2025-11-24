@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,23 @@ name = "adtui"
 version = "2.0.0"
 description = "Active Directory Terminal User Interface"
 readme = "README.md"
+long_description = """
+ADTUI is a powerful Terminal User Interface (TUI) for managing Active Directory, 
+built with Python and Textual. It provides vim-style commands, tree navigation, 
+user management, group operations, and comprehensive AD administration capabilities 
+all within a terminal interface.
+
+Features:
+- Search by CN or sAMAccountName with vim-style interface
+- Browse AD organizational structure with lazy loading
+- Create/copy user accounts with smart defaults
+- Manage user details, group memberships, and passwords
+- Create/delete OUs and move objects
+- Undo support for recent operations
+- AD Recycle Bin integration
+- Account and password expiry alerts
+"""
+long_description_content_type = "text/markdown"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
@@ -29,6 +46,7 @@ classifiers = [
 dependencies = [
     "ldap3>=2.9.1",
     "textual>=0.40.0",
+    "prompt-toolkit>=3.0.0",
 ]
 
 [project.optional-dependencies]
