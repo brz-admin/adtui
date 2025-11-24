@@ -527,7 +527,7 @@ def main():
     """Main entry point for the application."""
     print(f"Active Directory TUI - Domain: {DOMAIN}")
     username = input(f"Username [{last_user}]: ") or last_user
-    password = "REDACTED_PASSWORD" #getpass.getpass("Password: ")
+    password = getpass.getpass("Password: ")
     
     with open(LAST_USER_FILE, 'w') as f:
         f.write(username)
