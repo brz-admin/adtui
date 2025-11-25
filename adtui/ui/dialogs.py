@@ -674,24 +674,27 @@ class CreateUserDialog(ModalScreen):
             Static(f"[bold green]Create New User Account[/bold green]\n"),
             Static(f"Target OU: [cyan]{self.target_ou}[/cyan]\n"),
             
-            Input(placeholder="Full Name*", id="full-name"),
-            Input(placeholder="First Name (optional)", id="first-name"),
-            Input(placeholder="Last Name (optional)", id="last-name"),
-            Input(placeholder="User Logon Name*", id="samaccount"),
-            
-            Static("\n[bold]Password:[/bold]"),
-            Input(placeholder="Password*", password=True, id="password1"),
-            Input(placeholder="Confirm Password*", password=True, id="password2"),
-            
-            Static("\n[bold]Account Options:[/bold]"),
-            Checkbox("User must change password at next logon", id="must-change", value=True),
-            Checkbox("User cannot change password", id="cannot-change"),
-            Checkbox("Password never expires", id="never-expires"),
-            Checkbox("Account is disabled", id="disabled"),
-            
-            Horizontal(
-                Static("Account expires (YYYY-MM-DD, optional):"),
-                Input(placeholder="", id="account-expires"),
+            ScrollableContainer(
+                Input(placeholder="Full Name*", id="full-name"),
+                Input(placeholder="First Name (optional)", id="first-name"),
+                Input(placeholder="Last Name (optional)", id="last-name"),
+                Input(placeholder="User Logon Name*", id="samaccount"),
+                
+                Static("\n[bold]Password:[/bold]"),
+                Input(placeholder="Password*", password=True, id="password1"),
+                Input(placeholder="Confirm Password*", password=True, id="password2"),
+                
+                Static("\n[bold]Account Options:[/bold]"),
+                Checkbox("User must change password at next logon", id="must-change", value=True),
+                Checkbox("User cannot change password", id="cannot-change"),
+                Checkbox("Password never expires", id="never-expires"),
+                Checkbox("Account is disabled", id="disabled"),
+                
+                Horizontal(
+                    Static("Account expires (YYYY-MM-DD, optional):"),
+                    Input(placeholder="", id="account-expires"),
+                ),
+                id="scrollable-content"
             ),
             
             Horizontal(
@@ -811,27 +814,30 @@ class CopyUserDialog(ModalScreen):
             Static(f"Source User: [cyan]{self.source_label}[/cyan]"),
             Static(f"Target OU: [cyan]{self.target_ou}[/cyan]\n"),
             
-            Input(placeholder="New Full Name*", id="full-name"),
-            Input(placeholder="New User Logon Name*", id="samaccount"),
-            
-            Static("\n[bold]Password:[/bold]"),
-            Input(placeholder="Password*", password=True, id="password1"),
-            Input(placeholder="Confirm Password*", password=True, id="password2"),
-            
-            Static("\n[bold]Copy Options:[/bold]"),
-            Checkbox("Copy group memberships", id="copy-groups"),
-            Checkbox("Copy account options (password settings, disabled status)", id="copy-options"),
-            Checkbox("Copy manager relationship", id="copy-manager"),
-            
-            Static("\n[bold]Account Options:[/bold]"),
-            Checkbox("User must change password at next logon", id="must-change", value=True),
-            Checkbox("User cannot change password", id="cannot-change"),
-            Checkbox("Password never expires", id="never-expires"),
-            Checkbox("Account is disabled", id="disabled"),
-            
-            Horizontal(
-                Static("Account expires (YYYY-MM-DD, optional):"),
-                Input(placeholder="", id="account-expires"),
+            ScrollableContainer(
+                Input(placeholder="New Full Name*", id="full-name"),
+                Input(placeholder="New User Logon Name*", id="samaccount"),
+                
+                Static("\n[bold]Password:[/bold]"),
+                Input(placeholder="Password*", password=True, id="password1"),
+                Input(placeholder="Confirm Password*", password=True, id="password2"),
+                
+                Static("\n[bold]Copy Options:[/bold]"),
+                Checkbox("Copy group memberships", id="copy-groups"),
+                Checkbox("Copy account options (password settings, disabled status)", id="copy-options"),
+                Checkbox("Copy manager relationship", id="copy-manager"),
+                
+                Static("\n[bold]Account Options:[/bold]"),
+                Checkbox("User must change password at next logon", id="must-change", value=True),
+                Checkbox("User cannot change password", id="cannot-change"),
+                Checkbox("Password never expires", id="never-expires"),
+                Checkbox("Account is disabled", id="disabled"),
+                
+                Horizontal(
+                    Static("Account expires (YYYY-MM-DD, optional):"),
+                    Input(placeholder="", id="account-expires"),
+                ),
+                id="scrollable-content"
             ),
             
             Horizontal(
@@ -926,3 +932,106 @@ class CopyUserDialog(ModalScreen):
         
         except Exception as e:
             self.app.notify(f"Error copying user: {e}", severity="error")
+
+
+class LoginDialog(ModalScreen):
+    """Dialog for user authentication."""
+    
+    CSS = """
+    LoginDialog {
+        align: center middle;
+    }
+    
+    Horizontal {
+        align: center middle;
+    }
+    
+    #dialog {
+        width: 40;
+        min-width: 35;
+        max-width: 45;
+        height: 20;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+    
+    #question {
+        text-align: center;
+        margin-bottom: 1;
+    }
+    
+    Input {
+        width: 100%;
+        margin: 1 0;
+    }
+    
+    #dialog-buttons {
+        align: center middle;
+        margin-top: 1;
+        width: 100%;
+    }
+    
+    #dialog-buttons Button {
+        align: center middle;
+        margin: 0 1;
+        min-width: 50%;
+    }
+    """
+    
+    def __init__(self, last_user: str, domain: str):
+        super().__init__()
+        self.last_user = last_user
+        self.domain = domain
+    
+    def compose(self) -> ComposeResult:
+        yield Horizontal(
+            Vertical(
+                Static(f"[bold cyan]Active Directory Login[/bold cyan]\nDomain: {self.domain}\n", id="question"),
+                Input(placeholder="Username", id="username", value=self.last_user),
+                Input(placeholder="Password", password=True, id="password"),
+                Horizontal(
+                    Button("Login", variant="success", id="login"),
+                    Button("Cancel", variant="primary", id="cancel"),
+                    id="dialog-buttons"
+                ),
+                id="dialog"
+            )
+        )
+    
+    def on_mount(self) -> None:
+        """Focus username field if empty, otherwise password field."""
+        username_input = self.query_one("#username", Input)
+        if username_input.value:
+            self.query_one("#password", Input).focus()
+        else:
+            username_input.focus()
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in input fields."""
+        if event.input.id == "username":
+            # Move to password field when Enter is pressed in username
+            self.query_one("#password", Input).focus()
+        elif event.input.id == "password":
+            # Trigger login when Enter is pressed in password field
+            self._attempt_login()
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "login":
+            self._attempt_login()
+        else:
+            self.dismiss(None)
+    
+    def _attempt_login(self) -> None:
+        """Attempt to login with current credentials."""
+        username = self.query_one("#username", Input).value.strip()
+        password = self.query_one("#password", Input).value
+        
+        if not username:
+            self.app.notify("Username is required", severity="warning")
+            return
+        if not password:
+            self.app.notify("Password is required", severity="warning")
+            return
+        
+        self.dismiss((username, password))

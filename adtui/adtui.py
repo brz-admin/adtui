@@ -105,27 +105,53 @@ class ADTUI(App):
         Binding(":", "command_mode", "Command", show=True),
         Binding("/", "search_mode", "Search", show=True),
         Binding("r", "refresh_ou", "Refresh OU", show=True),
-        Binding("a", "edit_attributes", "Attributes", show=True),
-        Binding("g", "manage_groups", "Groups", show=True),
-        Binding("p", "set_password", "Password", show=True),
         Binding("c", "create_user", "Create User", show=True),
-        Binding("C", "copy_user", "Copy User", show=True),
+        # User-specific commands - hidden from footer but still functional
+        Binding("a", "edit_attributes", "Attributes", show=False),
+        Binding("g", "manage_groups", "Groups", show=False),
+        Binding("p", "set_password", "Password", show=False),
+        Binding("C", "copy_user", "Copy User", show=False),
+        Binding("d", "delete_object", "Delete", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
     ]
 
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: Optional[str] = None, password: Optional[str] = None):
         """Initialize the application.
         
         Args:
-            username: AD username
-            password: AD password
+            username: AD username (optional for deferred login)
+            password: AD password (optional for deferred login)
         """
         super().__init__()
         
-        # Establish connection
-        self.conn = get_ldap_connection(username, password)
+        # Only establish connection if credentials are provided
+        if username is not None and password is not None:
+            self.conn = get_ldap_connection(username, password)
+            self._initialize_services()
+        else:
+            self.conn = None
+            self.ldap_service = None
+            self.history_service = None
+            self.path_service = None
+            self.command_handler = None
+            # Create placeholder widgets
+            from adtree import ADTree
+            self.adtree = ADTree(None, BASE_DN)
+            self.details = DetailsPane(id="details-pane")
+            self.search_results_pane = SearchResultsPane(id="search-results-pane")
         
+        # State management
+        self.command_mode = False
+        self.autocomplete_mode = False
+        self.base_dn = BASE_DN
+        
+        # Current selection
+        self.current_selected_dn: Optional[str] = None
+        self.current_selected_label: Optional[str] = None
+    
+    def _initialize_services(self):
+        """Initialize services after connection is established."""
         # Initialize services
         self.ldap_service = LDAPService(self.conn, BASE_DN)
         self.history_service = HistoryService(max_size=50)
@@ -138,15 +164,6 @@ class ADTUI(App):
         self.adtree = ADTree(self.conn, BASE_DN)
         self.details = DetailsPane(id="details-pane")
         self.search_results_pane = SearchResultsPane(id="search-results-pane")
-        
-        # State management
-        self.command_mode = False
-        self.autocomplete_mode = False
-        self.base_dn = BASE_DN
-        
-        # Current selection
-        self.current_selected_dn: Optional[str] = None
-        self.current_selected_label: Optional[str] = None
         
         # Pending operations
         self.pending_delete_dn: Optional[str] = None
@@ -168,6 +185,7 @@ class ADTUI(App):
         """Handle mount event."""
         cmd_input = self.query_one("#command-input", Input)
         cmd_input.visible = False
+        self._update_footer()
 
     # ==================== Command Mode Actions ====================
     
@@ -266,11 +284,30 @@ class ADTUI(App):
         else:
             self.notify("Password setting only available for users", severity="warning")
 
+    def action_delete_object(self):
+        """Delete selected object."""
+        if not self.current_selected_dn:
+            self.notify("No object selected", severity="warning")
+            return
+        
+        # Show confirmation dialog
+        self.push_screen(
+            ConfirmDeleteDialog(str(self.current_selected_label) if self.current_selected_label else "", 
+                              self.current_selected_dn),
+            self.handle_delete_confirmation
+        )
+
     def _set_input_prefix(self, prefix: str):
         """Set the input prefix and move cursor to end."""
         cmd_input = self.query_one("#command-input", Input)
         cmd_input.value = prefix
         cmd_input.cursor_position = len(prefix)
+
+    def _update_footer(self):
+        """Update footer display based on current selection."""
+        # User-specific commands are now hidden from footer by default
+        # They remain functional and visible in details pane when appropriate
+        pass
 
     # ==================== Input Handling ====================
 
@@ -317,6 +354,7 @@ class ADTUI(App):
         self.current_selected_label = node.label
         print(f"Calling details.update_content...")
         self.details.update_content(node.label, node.data, self.conn)
+        self._update_footer()
         print(f"*** TREE NODE SELECTED END ***\n")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted):
@@ -327,6 +365,7 @@ class ADTUI(App):
                 self.current_selected_dn = item.data
                 self.current_selected_label = item.text
                 self.details.update_content(item.text, item.data, self.conn)
+                self._update_footer()
 
     def on_list_view_selected(self, event: ListView.Selected):
         """Handle list view selection (Enter key)."""
@@ -519,6 +558,7 @@ class ADTUI(App):
             self.current_selected_dn = None
             self.current_selected_label = None
             self.details.update_content(None)
+            self._update_footer()
             self.action_refresh_ou()
         else:
             self.notify(message, severity=Severity.ERROR.value)
@@ -784,19 +824,77 @@ class ADTUI(App):
             self.action_refresh_ou()
 
 def main():
-    """Main entry point for the application."""
+    """Main entry point for application."""
     print(f"Active Directory TUI - Domain: {DOMAIN}")
-    username = input(f"Username [{last_user}]: ") or last_user
-    password = getpass.getpass("Password: ")
     
-    with open(LAST_USER_FILE, 'w') as f:
-        f.write(username)
+    # Show login dialog first
+    from ui.dialogs import LoginDialog
+    import os
+    import sys
     
-    try:
-        app = ADTUI(username, password)
-        app.run()
-    except Exception as e:
-        print(f"Failed to connect: {e}")
+    # Global variable to store login credentials
+    login_credentials = None
+    
+    # Create a simple app just to show the login dialog
+    class LoginApp(App):
+        CSS = """
+        Screen {
+            layout: grid;
+            grid-size: 1 1;
+            background: $background;
+        }
+        
+        Static {
+            text-align: center;
+            content-align: center middle;
+        }
+        """
+        
+        def compose(self) -> ComposeResult:
+            yield Static(f"[bold cyan]Active Directory Login[/bold cyan]\n\nDomain: {DOMAIN}\n")
+        
+        def on_mount(self) -> None:
+            # Show login dialog immediately
+            self.push_screen(LoginDialog(last_user, DOMAIN), self.handle_login_result)
+        
+        def on_key(self, event) -> None:
+            if event.key == "escape":
+                self.exit()
+        
+        def handle_login_result(self, result):
+            """Handle login result."""
+            nonlocal login_credentials
+            if result:
+                username, password = result
+                
+                # Save username to file
+                with open(LAST_USER_FILE, 'w') as f:
+                    f.write(username)
+                
+                # Store credentials and exit login app
+                login_credentials = (username, password)
+                self.exit()  # Exit the LoginApp
+            else:
+                self.exit()
+    
+    # Run login app first
+    login_app = LoginApp()
+    login_app.run()
+    
+    # After login app exits, check if we have credentials and start main app
+    if login_credentials:
+        # Clear the screen immediately to minimize CLI gap
+        os.system('cls' if os.name == 'nt' else 'clear')
+        
+        username, password = login_credentials
+        try:
+            # Create and run the main app with credentials
+            app = ADTUI(username, password)
+            app.run()
+        except Exception as e:
+            print(f"Failed to start application: {e}")
+    else:
+        exit()
 
 
 if __name__ == "__main__":
