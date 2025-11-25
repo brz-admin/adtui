@@ -186,6 +186,9 @@ class ADTUI(App):
         cmd_input = self.query_one("#command-input", Input)
         cmd_input.visible = False
         self._update_footer()
+        
+        # Expand tree to show root level on startup with delay to ensure initialization
+        self.set_timer(0.5, self._expand_tree_on_startup)
 
     # ==================== Command Mode Actions ====================
     
@@ -398,11 +401,12 @@ class ADTUI(App):
                     self.current_selected_dn = item.data
                     self.current_selected_label = item.text
                     self.details.update_content(item.text, item.data, self.conn)
-                    # Expand tree in background
-                    self.set_timer(0.1, lambda: self.expand_tree_to_dn(item.data))
-                    # Hide search results and return focus to tree
+                    # Hide search results first
                     self.search_results_pane.styles.display = "none"
-                    self.adtree.focus()
+                    # Expand tree with slightly longer delay to ensure UI is ready
+                    self.set_timer(0.2, lambda: self.expand_tree_to_dn(item.data))
+                    # Return focus to tree after expansion
+                    self.set_timer(0.4, lambda: self.adtree.focus())
 
     # ==================== Tree Navigation ====================
     
@@ -429,9 +433,23 @@ class ADTUI(App):
             # Reverse to get from root to leaf
             ou_path.reverse()
             
-            # Navigate through the tree
-            current_node = self.adtree.root
+            # Start from the base DN node (first child of root)
+            if not self.adtree.root.children:
+                self.notify("Tree not loaded yet", severity="warning")
+                return
             
+            current_node = self.adtree.root.children[0]  # Base DN node
+            
+            # If no OU path, object is directly under base DN
+            if not ou_path:
+                # Just expand the base DN and select the object
+                if not current_node.is_expanded:
+                    current_node.expand()
+                self.adtree.ensure_node_loaded(current_node)
+                self._select_object_in_tree(current_node, dn)
+                return
+            
+            # Navigate through each OU in the path
             for ou_name in ou_path:
                 # Expand current node if not expanded
                 if not current_node.is_expanded:
@@ -446,14 +464,16 @@ class ADTUI(App):
                     child_label = str(child.label)
                     # Remove emoji and extra spaces
                     clean_label = child_label.replace('📁', '').strip()
-                    if clean_label == ou_name or clean_label == f"{ou_name}":
+                    # Case-insensitive comparison
+                    if clean_label.lower() == ou_name.lower():
                         current_node = child
                         found = True
                         break
                 
                 if not found:
-                    # Can't navigate further
-                    break
+                    # Can't navigate further - OU not found in tree
+                    self.notify(f"Could not find OU '{ou_name}' in tree", severity="warning")
+                    return
             
             # Expand the final OU to show its contents
             if current_node and current_node != self.adtree.root:
@@ -461,14 +481,14 @@ class ADTUI(App):
                     current_node.expand()
                     # Ensure final node is loaded
                     self.adtree.ensure_node_loaded(current_node)
-                    # Select object immediately since loading is synchronous
-                    self._select_object_in_tree(current_node, dn)
+                    # Add delay for tree to render after expansion
+                    self.set_timer(0.2, lambda: self._select_object_in_tree(current_node, dn))
                 else:
-                    self._select_object_in_tree(current_node, dn)
+                    # Select object in the final OU with small delay
+                    self.set_timer(0.1, lambda: self._select_object_in_tree(current_node, dn))
         
         except Exception as e:
-            # Silently fail - tree expansion is a nice-to-have feature
-            print(f"Could not expand tree to DN: {e}")
+            self.notify(f"Could not expand tree to DN: {e}", severity="warning")
     
     def _select_object_in_tree(self, parent_node, target_dn: str) -> None:
         """Select the specific object in the tree.
@@ -479,15 +499,56 @@ class ADTUI(App):
         """
         try:
             # Look for the object in the parent's children
+            found = False
             for child in parent_node.children:
                 if hasattr(child, 'data') and child.data == target_dn:
-                    # Select this node
+                    # Select node first
                     self.adtree.select_node(child)
-                    # Scroll to make it visible
-                    child.scroll_visible()
+                    # Focus tree to ensure cursor is on selected node
+                    self.adtree.focus()
+                    found = True
                     break
+            
+            # If object not found, it might be because the OU wasn't fully loaded
+            if not found:
+                # Try to reload the OU and search again
+                if hasattr(parent_node, 'data') and parent_node.data:
+                    # Clear the loaded flag to force reload
+                    if parent_node.data in self.adtree.loaded_ous:
+                        self.adtree.loaded_ous.remove(parent_node.data)
+                    
+                    # Reload the OU
+                    self.adtree.ensure_node_loaded(parent_node)
+                    
+                    # Try finding the object again
+                    for child in parent_node.children:
+                        if hasattr(child, 'data') and child.data == target_dn:
+                            # Select node first
+                            self.adtree.select_node(child)
+                            # Focus tree to ensure cursor is on selected node
+                            self.adtree.focus()
+                            found = True
+                            break
+                
+                if not found:
+                    # Object still not found - notify user
+                    self.notify("Object found but not visible in tree", severity="information")
+        
         except Exception as e:
-            print(f"Could not select object in tree: {e}")
+            self.notify(f"Could not select object in tree: {e}", severity="warning")
+    
+    def _expand_tree_on_startup(self) -> None:
+        """Expand tree to show root level on startup."""
+        try:
+            if self.adtree and self.adtree.conn and self.adtree.root and self.adtree.root.children:
+                root_node = self.adtree.root.children[0]  # Base DN node
+                # Ensure root node is expanded and loaded
+                if not root_node.is_expanded:
+                    root_node.expand()
+                    self.adtree.ensure_node_loaded(root_node)
+        except Exception as e:
+            # Silently fail - tree expansion is a nice-to-have feature
+            pass
     
     # ==================== Autocomplete ====================
 

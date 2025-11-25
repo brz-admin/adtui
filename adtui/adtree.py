@@ -24,6 +24,9 @@ class ADTree(Tree):
             # Start with the base DN as root
             root_node = self.root.add(f"📁 {self.base_dn}", expand=True)
             self._build_direct_children(root_node, self.base_dn)
+            
+            # Ensure tree root is expanded to show base DN node
+            self.root.expand()
         except Exception as e:
             print(f"Error building tree: {e}")
     
