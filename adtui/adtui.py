@@ -210,6 +210,11 @@ class ADTUI(App):
         """Refresh the currently selected OU."""
         self.adtree.refresh_current_ou()
     
+    def refresh_specific_ou(self, ou_dn: str):
+        """Refresh a specific OU by DN."""
+        # Find the tree node for this OU and refresh it
+        self.adtree.refresh_ou_by_dn(ou_dn)
+    
     def action_cancel_command(self):
         """Cancel command mode and hide input."""
         if self.command_mode:
@@ -550,6 +555,9 @@ class ADTUI(App):
         # Add to history
         self.history_service.add('delete', {'dn': dn, 'label': self.current_selected_label})
         
+        # Get parent OU before deletion for refresh
+        parent_ou = self.path_service.get_parent_dn(dn) if self.path_service else None
+        
         # Perform delete
         success, message = self.ldap_service.delete_object(dn)
         
@@ -559,7 +567,12 @@ class ADTUI(App):
             self.current_selected_label = None
             self.details.update_content(None)
             self._update_footer()
-            self.action_refresh_ou()
+            
+            # Refresh the parent OU to show the deletion
+            if parent_ou:
+                self.refresh_specific_ou(parent_ou)
+            else:
+                self.action_refresh_ou()  # Fallback to current selection
         else:
             self.notify(message, severity=Severity.ERROR.value)
 

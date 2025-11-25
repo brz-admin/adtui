@@ -234,3 +234,40 @@ class ADTree(Tree):
             self._populate_ou_fresh(self.cursor_node, ou_dn)
         else:
             print("OU not loaded yet, expand it first to load it")
+    
+    def refresh_ou_by_dn(self, ou_dn: str):
+        """Refresh a specific OU by finding its node in the tree."""
+        if self.conn is None:
+            return
+        
+        # Find the node with this DN
+        target_node = self._find_node_by_dn(self.root, ou_dn)
+        if target_node:
+            # Clear cache for this OU
+            if ou_dn in self.ou_cache:
+                del self.ou_cache[ou_dn]
+            if ou_dn in self.loaded_ous:
+                self.loaded_ous.remove(ou_dn)
+            
+            # Clear and repopulate with fresh data
+            target_node.remove_children()
+            self._populate_ou_fresh(target_node, ou_dn)
+            
+            # Expand the node to show refreshed content
+            target_node.expand()
+        else:
+            print(f"Could not find OU node for DN: {ou_dn}")
+    
+    def _find_node_by_dn(self, node, target_dn: str):
+        """Recursively find a tree node by its DN."""
+        if hasattr(node, 'data') and node.data == target_dn:
+            return node
+        
+        # Search children
+        if hasattr(node, 'children'):
+            for child in node.children:
+                result = self._find_node_by_dn(child, target_dn)
+                if result:
+                    return result
+        
+        return None
