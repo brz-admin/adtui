@@ -1,3 +1,4 @@
+from typing import Tuple
 from textual.widgets import Static, TabbedContent, TabPane, Static as StaticWidget, Label, Button, Input, ListView, ListItem
 from textual.containers import ScrollableContainer, Vertical, Horizontal
 from textual.app import ComposeResult
