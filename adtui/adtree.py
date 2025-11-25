@@ -70,6 +70,8 @@ class ADTree(Tree):
             # Use a thread to prevent UI freezing
             threading.Thread(target=self.populate_ou, args=(node, node.data)).start()
 
+
+
     def ensure_node_loaded(self, node):
         """Ensure a node's contents are loaded synchronously."""
         if node.data and node.data not in self.loaded_ous:
@@ -85,6 +87,9 @@ class ADTree(Tree):
             if ou_dn in self.ou_cache:
                 self._populate_from_cache(parent_node, ou_dn)
                 return
+
+            # Clear existing children before populating
+            parent_node.remove_children()
 
             # First add direct child OUs
             self._build_direct_children(parent_node, ou_dn)
@@ -136,6 +141,9 @@ class ADTree(Tree):
     def _populate_from_cache(self, parent_node, ou_dn):
         """Populate from cached results."""
         try:
+            # Clear existing children before populating
+            parent_node.remove_children()
+
             # First add direct child OUs
             self._build_direct_children(parent_node, ou_dn)
 
@@ -163,6 +171,9 @@ class ADTree(Tree):
         if self.conn is None:
             return
         try:
+            # Clear existing children before populating
+            parent_node.remove_children()
+
             # First add direct child OUs
             self._build_direct_children(parent_node, ou_dn)
 
