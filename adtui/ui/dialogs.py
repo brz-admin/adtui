@@ -993,9 +993,11 @@ class ADSelectionDialog(ModalScreen[str]):
         self.domain_data = {}
     
     def compose(self) -> ComposeResult:
-        ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
-[blue] ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
-[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
+        ascii_art = """[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
+[bold palegreen]  dPYb   8   8      8   8    8  8  [/bold palegreen]
+[bold palegreen] dPwwYb  8   8      8   8b..d8  8  [/bold palegreen]
+[bold palegreen]dP    Yb 888P'      8   `Y88P' 888 [/bold palegreen]
+                                   """
         
         yield Vertical(
             Static(ascii_art, id="ascii-art"),
@@ -1108,10 +1110,11 @@ class LoginDialog(ModalScreen):
         self.domain = domain
     
     def compose(self) -> ComposeResult:
-        ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
-[blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
-[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
-           
+        ascii_art = """[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
+[bold palegreen]  dPYb   8   8      8   8    8  8  [/bold palegreen]
+[bold palegreen] dPwwYb  8   8      8   8b..d8  8  [/bold palegreen]
+[bold palegreen]dP    Yb 888P'      8   `Y88P' 888 [/bold palegreen]
+                                   """
         yield Horizontal(
             Vertical(
                 Static(f"{ascii_art}\n\n[bold cyan]Active Directory Login[/bold cyan]\nDomain: {self.domain}\n", id="question"),
