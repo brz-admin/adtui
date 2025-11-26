@@ -269,7 +269,7 @@ class ADTUI(App):
             from widgets.user_details import UserDetailsPane
             user_details = UserDetailsPane()
             user_details.update_user_details(self.current_selected_dn, self.conn)
-            self.push_screen(ManageGroupsDialog(self.current_selected_dn, self.conn, user_details))
+            self.push_screen(ManageGroupsDialog(self.current_selected_dn, self.conn, user_details, self.base_dn))
         elif self.current_selected_label and "👥" in str(self.current_selected_label):
             from ui.dialogs import ManageGroupMembersDialog
             from widgets.group_details import GroupDetailsPane
@@ -675,11 +675,28 @@ class ADTUI(App):
     def handle_create_ou_confirmation(self, result):
         """Handle OU creation confirmation."""
         if result:
-            ou_path, description = result
-            self.create_ou(ou_path, description)
+            if len(result) == 3:
+                # New mode: (ou_name, parent_dn, description)
+                ou_name, parent_dn, description = result
+                self.create_ou_in_parent(ou_name, parent_dn, description)
+            else:
+                # Legacy mode: (path, description)
+                ou_path, description = result
+                self.create_ou(ou_path, description)
+
+    def create_ou_in_parent(self, ou_name: str, parent_dn: str, description: str = ""):
+        """Create a new OU in specified parent."""
+        success, message = self.ldap_service.create_ou(ou_name, parent_dn, description)
+        
+        if success:
+            self.notify(message, severity=Severity.INFORMATION.value)
+            self.history_service.add('create_ou', {'dn': f"ou={ou_name},{parent_dn}", 'name': ou_name})
+            self.action_refresh_ou()
+        else:
+            self.notify(message, severity=Severity.ERROR.value)
 
     def create_ou(self, path: str, description: str = ""):
-        """Create a new OU."""
+        """Create a new OU (legacy method)."""
         full_dn = self.path_service.path_to_dn(path)
         ou_name = self.path_service.extract_ou_name_from_path(path)
         parent_dn = self.path_service.get_parent_dn(full_dn)

@@ -149,7 +149,7 @@ MESSAGES = {
     'RESTORE_COMPLEX': "Restore failed. Use PowerShell: Restore-ADObject cmdlet for complex restores.",
     'TARGET_OU_NOT_FOUND': "Target OU not found: {dn}",
     'INVALID_TARGET_OU': "Invalid target OU: {error}",
-    'OU_PATH_REQUIRED': "OU path not specified. Usage: :mkou <path>",
+    'OU_PATH_REQUIRED': "OU name not specified. Usage: :mkou <OU name>",
     'TARGET_REQUIRED': "Target OU not specified. Usage: :m <path>",
     'RESTORE_NAME_REQUIRED': "Object name not specified. Usage: :restore <name>",
     'ACCOUNT_NOT_LOCKED': "Account is not currently locked",

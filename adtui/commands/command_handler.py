@@ -160,17 +160,27 @@ class CommandHandler:
             self.app.handle_move_confirmation
         )
     
-    def _handle_create_ou(self, path: str) -> None:
+    def _handle_create_ou(self, ou_name: str) -> None:
         """Handle OU creation command."""
-        if not path:
-            self.app.notify(MESSAGES['OU_PATH_REQUIRED'], severity=Severity.WARNING.value)
-            return
-        
-        from ui.dialogs import CreateOUDialog
-        self.app.push_screen(
-            CreateOUDialog(path),
-            self.app.handle_create_ou_confirmation
-        )
+        # If no OU name provided, use current selection as parent and prompt for name
+        if not ou_name:
+            if not self.app.current_selected_dn:
+                self.app.notify("No OU selected. Please select an OU first.", severity=Severity.WARNING.value)
+                return
+            
+            from ui.dialogs import CreateOUDialog
+            self.app.push_screen(
+                CreateOUDialog(parent_dn=self.app.current_selected_dn),
+                self.app.handle_create_ou_confirmation
+            )
+        else:
+            # OU name provided, use current selection as parent
+            if not self.app.current_selected_dn:
+                self.app.notify("No OU selected. Please select an OU first.", severity=Severity.WARNING.value)
+                return
+            
+            # Create OU directly with provided name
+            self.app.create_ou_in_parent(ou_name, self.app.current_selected_dn)
     
     def _handle_recycle(self, args: str) -> None:
         """Handle recycle bin view command."""
@@ -269,8 +279,8 @@ class CommandHandler:
 :copyuser [source] [ou] - Copy user account (uses current selection if not specified)
 
 [bold]OU Management:[/bold]
-:mkou <path>     - Create new OU at path
-:createou <path> - Same as :mkou
+:mkou <name>     - Create new OU with name in current location
+:createou <name> - Same as :mkou
 
 [bold]Recovery & History:[/bold]
 :recycle, :rb    - Show AD Recycle Bin contents

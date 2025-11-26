@@ -84,13 +84,23 @@ class ConfirmUndoDialog(BaseConfirmDialog):
 class CreateOUDialog(ModalScreen):
     """Dialog to create a new OU."""
     
-    def __init__(self, path: str):
+    def __init__(self, parent_dn: str = None, path: str = None):
         super().__init__()
-        self.path = path
+        self.parent_dn = parent_dn
+        self.path = path  # Keep for backward compatibility
     
     def compose(self) -> ComposeResult:
+        if self.parent_dn:
+            # New mode: creating OU in parent
+            parent_path = self._dn_to_path(self.parent_dn)
+            question_text = f"[bold green]Create New OU[/bold green]\n\nLocation: {parent_path}\n"
+        else:
+            # Legacy mode: creating at specific path
+            question_text = f"[bold green]Create New OU[/bold green]\n\nPath: {self.path}\n"
+        
         yield Vertical(
-            Static(f"[bold green]Create New OU[/bold green]\n\nPath: {self.path}\n", id="question"),
+            Static(question_text, id="question"),
+            Input(placeholder="OU Name", id="ou-name"),
             Input(placeholder="Description (optional)", id="ou-description"),
             Horizontal(
                 Button("Create", variant="success", id="create"),
@@ -100,10 +110,30 @@ class CreateOUDialog(ModalScreen):
             id="dialog"
         )
     
+    def _dn_to_path(self, dn: str) -> str:
+        """Convert DN to human-readable path."""
+        parts = dn.split(',')
+        ou_parts = []
+        
+        for part in parts:
+            part = part.strip()
+            if part.lower().startswith('ou='):
+                ou_parts.append(part[3:])
+        
+        ou_parts.reverse()
+        return '/' + '/'.join(ou_parts) if ou_parts else "/"
+    
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "create":
+            name_input = self.query_one("#ou-name", Input)
             description_input = self.query_one("#ou-description", Input)
-            self.dismiss((self.path, description_input.value))
+            
+            if self.parent_dn:
+                # New mode: return (ou_name, parent_dn, description)
+                self.dismiss((name_input.value, self.parent_dn, description_input.value))
+            else:
+                # Legacy mode: return (path, description)
+                self.dismiss((self.path, description_input.value))
         else:
             self.dismiss(None)
 
@@ -111,11 +141,12 @@ class CreateOUDialog(ModalScreen):
 class EditUserDialog(ModalScreen):
     """Dialog to edit user attributes."""
     
-    def __init__(self, dn: str, conn, user_details):
+    def __init__(self, dn: str, conn, user_details, base_dn: str):
         super().__init__()
         self.dn = dn
         self.conn = conn
         self.user_details = user_details
+        self.base_dn = base_dn
     
     def compose(self) -> ComposeResult:
         cn = str(self.user_details.entry.cn.value) if self.user_details and hasattr(self.user_details.entry, 'cn') else "User"
@@ -176,11 +207,12 @@ class ManageGroupsDialog(ModalScreen):
         ("a", "add_group", "Add Group"),
     ]
     
-    def __init__(self, dn: str, conn, user_details):
+    def __init__(self, dn: str, conn, user_details, base_dn: str):
         super().__init__()
         self.dn = dn
         self.conn = conn
         self.user_details = user_details
+        self.base_dn = base_dn
         self.groups_data = {}
     
     def compose(self) -> ComposeResult:
@@ -252,9 +284,9 @@ class ManageGroupsDialog(ModalScreen):
     def _search_groups(self, query: str) -> None:
         """Search for groups matching query and show in list."""
         try:
-            base_dn = ','.join(self.dn.split(',')[1:])  # Get base DN from user DN
+            # Use domain base DN to search all groups in AD, not just user's OU
             self.conn.search(
-                base_dn,
+                self.base_dn,
                 f'(&(objectClass=group)(cn=*{query}*))',
                 attributes=['cn', 'distinguishedName'],
                 size_limit=50
