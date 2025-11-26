@@ -14,18 +14,12 @@ from textual.binding import Binding
 from adtree import ADTree
 from widgets.details_pane import DetailsPane
 from services import LDAPService, HistoryService, PathService
+from services.config_service import ConfigService, ADConfig
 from commands import CommandHandler
-from ui.dialogs import ConfirmDeleteDialog, ConfirmMoveDialog, ConfirmRestoreDialog, ConfirmUndoDialog, CreateOUDialog
+from ui.dialogs import ConfirmDeleteDialog, ConfirmMoveDialog, ConfirmRestoreDialog, ConfirmUndoDialog, CreateOUDialog, ADSelectionDialog, LoginDialog
 from constants import Severity, MESSAGES
 
-# Load configuration
-config = configparser.ConfigParser()
-config.read('config.ini')
-
-LDAP_SERVER = config['ldap']['server']
-DOMAIN = config['ldap']['domain']
-BASE_DN = config['ldap']['base_dn']
-USE_SSL = config.getboolean('ldap', 'use_ssl', fallback=False)
+# Configuration will be loaded after AD selection
 LAST_USER_FILE = 'last_user.txt'
 
 last_user = ''
@@ -34,12 +28,13 @@ if os.path.exists(LAST_USER_FILE):
         last_user = f.read().strip()
 
 
-def get_ldap_connection(username: str, password: str) -> Connection:
+def get_ldap_connection(username: str, password: str, ad_config: ADConfig) -> Connection:
     """Create and return an Active Directory connection.
     
     Args:
         username: AD username
         password: AD password
+        ad_config: AD configuration object
         
     Returns:
         Active LDAP connection
@@ -47,18 +42,18 @@ def get_ldap_connection(username: str, password: str) -> Connection:
     Raises:
         Exception: If connection fails
     """
-    bind_dn = f"{username}@{DOMAIN}"
-    port = 636 if USE_SSL else 389
-    server = Server(LDAP_SERVER, port=port, use_ssl=USE_SSL, get_info=ALL)
+    bind_dn = f"{username}@{ad_config.domain}"
+    port = 636 if ad_config.use_ssl else 389
+    server = Server(ad_config.server, port=port, use_ssl=ad_config.use_ssl, get_info=ALL)
     try:
         # For password operations, AD requires SSL/TLS
-        if not USE_SSL:
+        if not ad_config.use_ssl:
             print("WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini")
         
         conn = Connection(server, user=bind_dn, password=password, auto_bind=True)
         
         # Test if we can perform password operations
-        if USE_SSL:
+        if ad_config.use_ssl:
             # Connection is ready for password operations
             pass
         else:
@@ -116,18 +111,22 @@ class ADTUI(App):
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
     ]
 
-    def __init__(self, username: Optional[str] = None, password: Optional[str] = None):
+    def __init__(self, username: Optional[str] = None, password: Optional[str] = None, ad_config: Optional[ADConfig] = None):
         """Initialize the application.
         
         Args:
             username: AD username (optional for deferred login)
             password: AD password (optional for deferred login)
+            ad_config: AD configuration (optional for deferred login)
         """
         super().__init__()
         
+        self.ad_config = ad_config
+        
         # Only establish connection if credentials are provided
-        if username is not None and password is not None:
-            self.conn = get_ldap_connection(username, password)
+        if username is not None and password is not None and ad_config is not None:
+            self.base_dn = ad_config.base_dn
+            self.conn = get_ldap_connection(username, password, ad_config)
             self._initialize_services()
         else:
             self.conn = None
@@ -137,14 +136,14 @@ class ADTUI(App):
             self.command_handler = None
             # Create placeholder widgets
             from adtree import ADTree
-            self.adtree = ADTree(None, BASE_DN)
+            self.base_dn = ad_config.base_dn if ad_config else ""
+            self.adtree = ADTree(None, self.base_dn)
             self.details = DetailsPane(id="details-pane")
             self.search_results_pane = SearchResultsPane(id="search-results-pane")
         
         # State management
         self.command_mode = False
         self.autocomplete_mode = False
-        self.base_dn = BASE_DN
         
         # Current selection
         self.current_selected_dn: Optional[str] = None
@@ -153,15 +152,15 @@ class ADTUI(App):
     def _initialize_services(self):
         """Initialize services after connection is established."""
         # Initialize services
-        self.ldap_service = LDAPService(self.conn, BASE_DN)
+        self.ldap_service = LDAPService(self.conn, self.base_dn)
         self.history_service = HistoryService(max_size=50)
-        self.path_service = PathService(BASE_DN)
+        self.path_service = PathService(self.base_dn)
         
         # Initialize command handler
         self.command_handler = CommandHandler(self)
         
         # Initialize widgets
-        self.adtree = ADTree(self.conn, BASE_DN)
+        self.adtree = ADTree(self.conn, self.base_dn)
         self.details = DetailsPane(id="details-pane")
         self.search_results_pane = SearchResultsPane(id="search-results-pane")
         
@@ -567,7 +566,7 @@ class ADTUI(App):
         
         # Determine search base
         if path_parts:
-            search_base = self.path_service.path_to_dn('/'.join(path_parts))
+            search_base = self.path_service.path_to_dn('/'.join(path_parts)) if self.path_service else self.base_dn
         else:
             search_base = self.base_dn
         
@@ -827,7 +826,7 @@ class ADTUI(App):
         # Use current selected OU or base DN
         target_ou = self._get_current_ou()
         if not target_ou:
-            target_ou = self.ldap_service.base_dn
+            target_ou = self.ldap_service.base_dn if self.ldap_service else self.base_dn
         
         self.push_screen(CreateUserDialog(target_ou, self.ldap_service), 
                        self.handle_create_user_confirmation)
@@ -848,7 +847,7 @@ class ADTUI(App):
         # Use current selected OU as target
         target_ou = self._get_current_ou()
         if not target_ou:
-            target_ou = self.ldap_service.base_dn
+            target_ou = self.ldap_service.base_dn if self.ldap_service else self.base_dn
         
         self.push_screen(CopyUserDialog(self.current_selected_dn, 
                                     str(self.current_selected_label) if self.current_selected_label else "", 
@@ -869,7 +868,7 @@ class ADTUI(App):
                     return ','.join(dn_parts[1:])
         
         # Fallback to base DN
-        return self.ldap_service.base_dn
+        return self.ldap_service.base_dn if self.ldap_service else self.base_dn
 
     def _is_user_object(self, dn: str) -> bool:
         """Check if DN represents a user object."""
@@ -899,18 +898,27 @@ class ADTUI(App):
 
 def main():
     """Main entry point for application."""
-    print(f"Active Directory TUI - Domain: {DOMAIN}")
+    # Load configuration
+    try:
+        config_service = ConfigService()
+    except Exception as e:
+        print(f"Failed to load configuration: {e}")
+        return
     
-    # Show login dialog first
-    from ui.dialogs import LoginDialog
-    import os
-    import sys
+    # Validate configuration
+    is_valid, issues = config_service.validate_config()
+    if not is_valid:
+        print("Configuration errors:")
+        for issue in issues:
+            print(f"  - {issue}")
+        return
     
-    # Global variable to store login credentials
+    # Global variables to store login results
+    selected_domain = None
     login_credentials = None
     
-    # Create a simple app just to show the login dialog
-    class LoginApp(App):
+    # Create a simple app for the login flow
+    class LoginFlowApp(App):
         CSS = """
         Screen {
             layout: grid;
@@ -925,15 +933,38 @@ def main():
         """
         
         def compose(self) -> ComposeResult:
-            yield Static(f"[bold cyan]Active Directory Login[/bold cyan]\n\nDomain: {DOMAIN}\n")
+            ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
+[blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
+[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
+            
+            yield Static(f"{ascii_art}\n\n[bold cyan]Active Directory TUI[/bold cyan]\n")
         
         def on_mount(self) -> None:
-            # Show login dialog immediately
-            self.push_screen(LoginDialog(last_user, DOMAIN), self.handle_login_result)
+            nonlocal selected_domain, login_credentials
+            
+            # Check if we need to show AD selection dialog
+            if config_service.has_multiple_domains():
+                # Show AD selection dialog first
+                self.push_screen(ADSelectionDialog(config_service.ad_configs), self.handle_ad_selection)
+            else:
+                # Skip AD selection, use the default domain
+                selected_domain = config_service.get_default_domain()
+                self.show_login_dialog()
         
-        def on_key(self, event) -> None:
-            if event.key == "escape":
+        def handle_ad_selection(self, domain):
+            """Handle AD domain selection."""
+            nonlocal selected_domain
+            if domain:
+                selected_domain = domain
+                self.show_login_dialog()
+            else:
                 self.exit()
+        
+        def show_login_dialog(self):
+            """Show the login dialog."""
+            nonlocal login_credentials
+            ad_config = config_service.get_config(selected_domain)
+            self.push_screen(LoginDialog(last_user, ad_config.domain), self.handle_login_result)
         
         def handle_login_result(self, result):
             """Handle login result."""
@@ -947,23 +978,29 @@ def main():
                 
                 # Store credentials and exit login app
                 login_credentials = (username, password)
-                self.exit()  # Exit the LoginApp
+                self.exit()
             else:
                 self.exit()
+        
+        def on_key(self, event) -> None:
+            if event.key == "escape":
+                self.exit()
     
-    # Run login app first
-    login_app = LoginApp()
+    # Run login flow app first
+    login_app = LoginFlowApp()
     login_app.run()
     
     # After login app exits, check if we have credentials and start main app
-    if login_credentials:
+    if login_credentials and selected_domain:
         # Clear the screen immediately to minimize CLI gap
         os.system('cls' if os.name == 'nt' else 'clear')
         
         username, password = login_credentials
+        ad_config = config_service.get_config(selected_domain)
+        
         try:
-            # Create and run the main app with credentials
-            app = ADTUI(username, password)
+            # Create and run the main app with credentials and AD config
+            app = ADTUI(username, password, ad_config)
             app.run()
         except Exception as e:
             print(f"Failed to start application: {e}")
