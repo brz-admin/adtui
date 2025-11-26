@@ -1,3 +1,34 @@
+# Multi-AD Configuration
+# Uncomment and configure multiple AD domains below
+
+[ad_domains]
+# List of available AD domains (comma-separated)
+# domains = DOMMAN, CORP, TEST
+
+# Individual AD domain configurations
+# Each domain should have its own section prefixed with "ad_"
+
+[ad_DOMMAN]
+server = servad4.domman.ad
+domain = DOMMAN
+base_dn = DC=domman,DC=ad
+use_ssl = false
+
+# Example additional domain configurations
+# [ad_CORP]
+# server = dc1.corp.company.com
+# domain = CORP
+# base_dn = DC=corp,DC=company,DC=com
+# use_ssl = true
+
+# [ad_TEST]
+# server = test-dc.test.local
+# domain = TEST
+# base_dn = DC=test,DC=local
+# use_ssl = false
+
+# Legacy single AD support (for backward compatibility)
+# If you only have one AD domain, you can use this format instead
 [ldap]
 server = servad4.domman.ad
 domain = DOMMAN

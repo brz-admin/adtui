@@ -407,4 +407,4 @@ Full LDAP DN also works:
                     return ','.join(dn_parts[1:])
         
         # Fallback to base DN
-        return self.app.ldap_service.base_dn
+        return self.app.ldap_service.base_dn if self.app.ldap_service else self.app.base_dn

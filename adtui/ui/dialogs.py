@@ -4,6 +4,7 @@ from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
 from textual.widgets import Static, Button, Input, ListView, ListItem, Label, Checkbox
+from typing import Dict
 import unicodedata
 
 
@@ -934,6 +935,130 @@ class CopyUserDialog(ModalScreen):
             self.app.notify(f"Error copying user: {e}", severity="error")
 
 
+class ADSelectionDialog(ModalScreen[str]):
+    """Dialog for selecting AD domain when multiple are configured."""
+    
+    CSS = """
+    ADSelectionDialog {
+        align: center middle;
+    }
+    
+    #dialog {
+        width: 60;
+        max-width: 60;
+        height: 30;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 2 3;
+    }
+    
+    #ascii-art {
+        text-align: center;
+        margin-bottom: 2;
+    }
+    
+    #question {
+        text-align: center;
+        margin-bottom: 1;
+    }
+    
+    #domains-list {
+        height: auto;
+        max-height: 15;
+        margin: 1 0;
+        border: solid $primary;
+    }
+    
+    #domain-info {
+        text-align: center;
+        margin-top: 1;
+        color: $text-muted;
+    }
+    
+    #dialog-buttons {
+        align: center middle;
+        margin-top: 2;
+        width: 100%;
+    }
+    
+    #dialog-buttons Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    """
+    
+    def __init__(self, ad_configs: Dict[str, 'ADConfig']):
+        super().__init__()
+        self.ad_configs = ad_configs
+        self.domain_data = {}
+    
+    def compose(self) -> ComposeResult:
+        ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
+[blue] ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
+[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
+        
+        yield Vertical(
+            Static(ascii_art, id="ascii-art"),
+            Static("[bold cyan]Select Active Directory Domain[/bold cyan]\n", id="question"),
+            ListView(id="domains-list"),
+            Static("", id="domain-info"),
+            Horizontal(
+                Button("Select", variant="success", id="select"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-buttons"
+            ),
+            id="dialog"
+        )
+    
+    def on_mount(self) -> None:
+        """Populate the domains list after mounting."""
+        domains_list = self.query_one("#domains-list", ListView)
+        
+        for domain, config in self.ad_configs.items():
+            label = f"[bold]{domain}[/bold] - {config.server}"
+            if config.use_ssl:
+                label += " [green](SSL)[/green]"
+            else:
+                label += " [yellow](No SSL)[/yellow]"
+            
+            item = ListItem(Label(label))
+            self.domain_data[id(item)] = domain
+            domains_list.append(item)
+        
+        domains_list.focus()
+    
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Update domain info when selection changes."""
+        if event.list_view.id == "domains-list":
+            item = event.item
+            domain = self.domain_data.get(id(item))
+            if domain:
+                config = self.ad_configs[domain]
+                info_text = f"Domain: {config.domain}\nServer: {config.server}\nBase DN: {config.base_dn}"
+                self.query_one("#domain-info", Static).update(info_text)
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "select":
+            domains_list = self.query_one("#domains-list", ListView)
+            if domains_list.highlighted_child:
+                item = domains_list.highlighted_child
+                domain = self.domain_data.get(id(item))
+                if domain:
+                    self.dismiss(domain)
+            else:
+                self.app.notify("Please select a domain", severity="warning")
+        else:
+            self.dismiss(None)
+    
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle domain selection from list."""
+        if event.list_view.id == "domains-list":
+            item = event.item
+            domain = self.domain_data.get(id(item))
+            if domain:
+                self.dismiss(domain)
+
+
 class LoginDialog(ModalScreen):
     """Dialog for user authentication."""
     
@@ -947,10 +1072,8 @@ class LoginDialog(ModalScreen):
     }
     
     #dialog {
-        width: 40;
-        min-width: 35;
-        max-width: 45;
-        height: 20;
+        width: 60;
+        height: 30;
         border: thick $background 80%;
         background: $surface;
         padding: 1 2;
@@ -985,9 +1108,13 @@ class LoginDialog(ModalScreen):
         self.domain = domain
     
     def compose(self) -> ComposeResult:
+        ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
+[blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
+[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
+           
         yield Horizontal(
             Vertical(
-                Static(f"[bold cyan]Active Directory Login[/bold cyan]\nDomain: {self.domain}\n", id="question"),
+                Static(f"{ascii_art}\n\n[bold cyan]Active Directory Login[/bold cyan]\nDomain: {self.domain}\n", id="question"),
                 Input(placeholder="Username", id="username", value=self.last_user),
                 Input(placeholder="Password", password=True, id="password"),
                 Horizontal(
