@@ -48,7 +48,7 @@ class UserAccountControl:
 
 class PasswordPolicy:
     """Default password policy settings."""
-    MAX_AGE_DAYS = 42  # Should be queried from domain policy
+    MAX_AGE_DAYS = 120  # Should be queried from domain policy
     WARNING_DAYS_CRITICAL = 7
     WARNING_DAYS_NORMAL = 14
 

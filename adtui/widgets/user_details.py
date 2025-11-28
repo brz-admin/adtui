@@ -4,6 +4,12 @@ from textual.containers import ScrollableContainer, Vertical, Horizontal
 from textual.app import ComposeResult
 from datetime import datetime, timedelta
 from ldap3 import MODIFY_REPLACE, MODIFY_ADD, MODIFY_DELETE
+import sys
+import os
+
+# Add parent directory to path to import constants
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from constants import PasswordPolicy
 
 class UserDetailsPane(Static):
     def __init__(self, *args, **kwargs):
@@ -88,6 +94,7 @@ class UserDetailsPane(Static):
         pwd_last_set = "N/A"
         pwd_last_set_dt = None
         pwd_expiry_warning = ""
+        pwd_expiry_info = ""
         
         if hasattr(self.entry, 'pwdLastSet') and self.entry.pwdLastSet.value:
             try:
@@ -97,19 +104,23 @@ class UserDetailsPane(Static):
                     pwd_last_set_dt = datetime(1601, 1, 1) + timedelta(microseconds=filetime / 10)
                     pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
                     
-                    # Calculate password expiry (default domain policy is typically 42 days)
-                    # This should ideally be fetched from domain policy
+                    # Calculate password expiry using domain policy
                     if not password_never_expires:
-                        max_pwd_age_days = 42  # Default, should be from domain policy
+                        max_pwd_age_days = PasswordPolicy.MAX_AGE_DAYS
                         pwd_expires = pwd_last_set_dt + timedelta(days=max_pwd_age_days)
                         days_until_expiry = (pwd_expires - datetime.now()).days
                         
                         if days_until_expiry < 0:
                             pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
-                        elif days_until_expiry <= 7:
+                            pwd_expiry_info = f"[red]Expired {abs(days_until_expiry)} days ago[/red]"
+                        elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_CRITICAL:
                             pwd_expiry_warning = f"[yellow bold]⚠ Password expires in {days_until_expiry} days![/yellow bold]"
-                        elif days_until_expiry <= 14:
+                            pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
+                        elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_NORMAL:
                             pwd_expiry_warning = f"[yellow]⚠ Password expires in {days_until_expiry} days[/yellow]"
+                            pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
+                        else:
+                            pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
             except:
                 pwd_last_set = str(self.entry.pwdLastSet.value)
         
@@ -153,7 +164,7 @@ Home Directory: {home_dir}
 Disabled: {'[red]Yes[/red]' if is_disabled else '[green]No[/green]'}
 Locked: {'[red]Yes[/red]' if is_locked else '[green]No[/green]'}
 Password Never Expires: {'Yes' if password_never_expires else 'No'}
-Password Last Set: {pwd_last_set}
+Password Last Set: {pwd_last_set}{' - ' + pwd_expiry_info if pwd_expiry_info and not password_never_expires else ''}
 
 [bold]Member Of ({len(self.member_of)} groups):[/bold]
 """
