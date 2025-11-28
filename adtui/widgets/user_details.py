@@ -100,7 +100,14 @@ class UserDetailsPane(Static):
             try:
                 # Convert Windows FILETIME to datetime
                 filetime = int(self.entry.pwdLastSet.value)
-                if filetime > 0:
+                
+                if filetime == 0:
+                    # pwdLastSet = 0 means "user must change password at next logon"
+                    pwd_last_set = "Must change at next logon"
+                    if not password_never_expires:
+                        pwd_expiry_warning = "[red bold]⚠ PASSWORD MUST BE CHANGED![/red bold]"
+                        pwd_expiry_info = "[red]Must change at next logon[/red]"
+                elif filetime > 0:
                     pwd_last_set_dt = datetime(1601, 1, 1) + timedelta(microseconds=filetime / 10)
                     pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
                     
@@ -121,8 +128,20 @@ class UserDetailsPane(Static):
                             pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
                         else:
                             pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
-            except:
+                else:
+                    # Negative filetime or invalid value
+                    pwd_last_set = "Invalid timestamp"
+                    if not password_never_expires:
+                        pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
+            except Exception as e:
                 pwd_last_set = str(self.entry.pwdLastSet.value)
+                # Even if there's an error, try to show basic expiry info if password can expire
+                if not password_never_expires:
+                    pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
+        else:
+            # If password can expire but we can't get pwdLastSet, show that info
+            if not password_never_expires:
+                pwd_expiry_info = "[yellow]Password expiry unknown[/yellow]"
         
         # Account expiry
         account_expiry_warning = ""
