@@ -98,8 +98,51 @@ class UserDetailsPane(Static):
         
         if hasattr(self.entry, 'pwdLastSet') and self.entry.pwdLastSet.value:
             try:
-                # Convert Windows FILETIME to datetime
-                filetime = int(self.entry.pwdLastSet.value)
+                # Handle different data types for pwdLastSet
+                pwd_last_set_value = self.entry.pwdLastSet.value
+                
+                # Initialize variables
+                filetime = None
+                pwd_last_set_dt = None
+                
+                if isinstance(pwd_last_set_value, str):
+                    if pwd_last_set_value == "0":
+                        filetime = 0
+                    else:
+                        # Parse datetime string format: "2025-08-25 05:38:16.421434+00:00"
+                        try:
+                            from datetime import datetime as dt
+                            # Handle timezone-aware datetime strings
+                            if '+' in pwd_last_set_value:
+                                # Split timezone part
+                                datetime_part = pwd_last_set_value.split('+')[0].strip()
+                                pwd_last_set_dt = dt.strptime(datetime_part, '%Y-%m-%d %H:%M:%S.%f')
+                            else:
+                                # Handle format without timezone
+                                if '.' in pwd_last_set_value:
+                                    pwd_last_set_dt = dt.strptime(pwd_last_set_value, '%Y-%m-%d %H:%M:%S.%f')
+                                else:
+                                    pwd_last_set_dt = dt.strptime(pwd_last_set_value, '%Y-%m-%d %H:%M:%S')
+                            
+                            pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
+                            filetime = None  # We don't need filetime conversion
+                        except ValueError as ve:
+                            print(f"DEBUG: Failed to parse datetime string: {ve}")
+                            # Fallback: try to convert to int if it's actually a numeric string
+                            try:
+                                filetime = int(pwd_last_set_value)
+                            except ValueError:
+                                raise Exception(f"Cannot parse pwdLastSet value: {pwd_last_set_value}")
+                
+                elif isinstance(pwd_last_set_value, int):
+                    # Handle Windows FILETIME integer format
+                    filetime = pwd_last_set_value
+                else:
+                    # Try to convert to int if it's numeric
+                    try:
+                        filetime = int(pwd_last_set_value)
+                    except (ValueError, TypeError):
+                        raise Exception(f"Unsupported pwdLastSet type: {type(pwd_last_set_value)}")
                 
                 if filetime == 0:
                     # pwdLastSet = 0 means "user must change password at next logon"
@@ -107,34 +150,34 @@ class UserDetailsPane(Static):
                     if not password_never_expires:
                         pwd_expiry_warning = "[red bold]⚠ PASSWORD MUST BE CHANGED![/red bold]"
                         pwd_expiry_info = "[red]Must change at next logon[/red]"
-                elif filetime > 0:
+                elif filetime is not None and filetime > 0:
+                    # Handle Windows FILETIME format
                     pwd_last_set_dt = datetime(1601, 1, 1) + timedelta(microseconds=filetime / 10)
                     pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Calculate password expiry if we have a valid datetime
+                if pwd_last_set_dt and not password_never_expires:
+                    max_pwd_age_days = PasswordPolicy.MAX_AGE_DAYS
+                    pwd_expires = pwd_last_set_dt + timedelta(days=max_pwd_age_days)
+                    days_until_expiry = (pwd_expires - datetime.now()).days
                     
-                    # Calculate password expiry using domain policy
-                    if not password_never_expires:
-                        max_pwd_age_days = PasswordPolicy.MAX_AGE_DAYS
-                        pwd_expires = pwd_last_set_dt + timedelta(days=max_pwd_age_days)
-                        days_until_expiry = (pwd_expires - datetime.now()).days
-                        
-                        if days_until_expiry < 0:
-                            pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
-                            pwd_expiry_info = f"[red]Expired {abs(days_until_expiry)} days ago[/red]"
-                        elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_CRITICAL:
-                            pwd_expiry_warning = f"[yellow bold]⚠ Password expires in {days_until_expiry} days![/yellow bold]"
-                            pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
-                        elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_NORMAL:
-                            pwd_expiry_warning = f"[yellow]⚠ Password expires in {days_until_expiry} days[/yellow]"
-                            pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
-                        else:
-                            pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
-                else:
-                    # Negative filetime or invalid value
-                    pwd_last_set = "Invalid timestamp"
-                    if not password_never_expires:
-                        pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
+                    if days_until_expiry < 0:
+                        pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
+                        pwd_expiry_info = f"[red]Expired {abs(days_until_expiry)} days ago[/red]"
+                    elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_CRITICAL:
+                        pwd_expiry_warning = f"[yellow bold]⚠ Password expires in {days_until_expiry} days![/yellow bold]"
+                        pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
+                    elif days_until_expiry <= PasswordPolicy.WARNING_DAYS_NORMAL:
+                        pwd_expiry_warning = f"[yellow]⚠ Password expires in {days_until_expiry} days[/yellow]"
+                        pwd_expiry_info = f"[yellow]{days_until_expiry} days remaining[/yellow]"
+                    else:
+                        pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
+                elif filetime is None and not password_never_expires:
+                    # We had a datetime string but couldn't calculate expiry
+                    pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
             except Exception as e:
-                pwd_last_set = str(self.entry.pwdLastSet.value)
+                pwd_last_set_value = self.entry.pwdLastSet.value
+                pwd_last_set = str(pwd_last_set_value)
                 # Even if there's an error, try to show basic expiry info if password can expire
                 if not password_never_expires:
                     pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
