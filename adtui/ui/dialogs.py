@@ -179,16 +179,31 @@ class EditUserDialog(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             try:
-                from ldap3 import MODIFY_REPLACE
+                from ldap3 import MODIFY_REPLACE, MODIFY_DELETE
                 
-                fields = ['displayName', 'givenName', 'sn', 'mail', 'telephoneNumber', 'mobile', 
-                         'physicalDeliveryOfficeName', 'department', 'title', 'description', 
-                         'profilePath', 'homeDirectory']
+                # Required fields that cannot be empty
+                required_fields = ['displayName', 'givenName', 'sn']
+                # Optional fields that can be empty (will be deleted if empty)
+                optional_fields = ['mail', 'telephoneNumber', 'mobile', 
+                                 'physicalDeliveryOfficeName', 'department', 'title', 'description', 
+                                 'profilePath', 'homeDirectory']
                 
-                for field in fields:
+                # Process required fields
+                for field in required_fields:
                     value = self.query_one(f"#{field}", Input).value.strip()
                     if value:  # Only update if not empty
                         self.conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
+                
+                # Process optional fields
+                for field in optional_fields:
+                    value = self.query_one(f"#{field}", Input).value.strip()
+                    if value:  # Update with new value if not empty
+                        self.conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
+                    else:  # Delete the attribute if empty
+                        # Check if the attribute currently exists before trying to delete
+                        entry = self.user_details.entry
+                        if hasattr(entry, field):
+                            self.conn.modify(self.dn, {field: [(MODIFY_DELETE, [])]})
                 
                 self.app.notify("User updated successfully", severity="information")
                 self.dismiss(True)
@@ -244,21 +259,60 @@ class ManageGroupsDialog(ModalScreen):
     def action_dismiss_dialog(self) -> None:
         self.dismiss()
     
+    def _refresh_groups_list(self) -> None:
+        """Refresh the groups list from current user_details."""
+        groups_list = self.query_one("#groups-list", ListView)
+        groups_list.clear()
+        self.groups_data.clear()
+        
+        if self.user_details and self.user_details.member_of:
+            for group in self.user_details.member_of:
+                item = ListItem(Label(group['name']))
+                self.groups_data[id(item)] = group
+                groups_list.append(item)
+        
+        # Update the header with current count
+        header = self.query_one("#question", Static)
+        cn = str(self.user_details.entry.cn.value) if self.user_details and hasattr(self.user_details.entry, 'cn') else "User"
+        header.update(f"[bold cyan]Group Memberships: {cn}[/bold cyan]\n\nMember of {len(self.user_details.member_of) if self.user_details else 0} groups\n[dim]Delete: Remove | A: Add | Esc: Close[/dim]\n")
+    
+    def _update_user_details(self) -> None:
+        """Update user_details after LDAP operations."""
+        try:
+            # Re-fetch user details to get current group memberships
+            from widgets.user_details import UserDetailsPane
+            temp_user_details = UserDetailsPane()
+            temp_user_details.update_user_details(self.dn, self.conn)
+            self.user_details = temp_user_details
+        except Exception as e:
+            self.app.notify(f"Error refreshing user details: {e}", severity="error")
+    
     def action_remove_group(self) -> None:
         """Remove selected group."""
         groups_list = self.query_one("#groups-list", ListView)
-        if groups_list.highlighted_child:
-            item = groups_list.highlighted_child
-            group_data = self.groups_data.get(id(item))
-            if group_data:
-                try:
-                    from ldap3 import MODIFY_DELETE
-                    self.conn.modify(group_data['dn'], {'member': [(MODIFY_DELETE, [self.dn])]})
-                    groups_list.remove_items([item])
-                    del self.groups_data[id(item)]
-                    self.app.notify(f"Removed from {group_data['name']}", severity="information")
-                except Exception as e:
-                    self.app.notify(f"Error removing from group: {e}", severity="error")
+        if not groups_list.highlighted_child:
+            self.app.notify("No group selected", severity="warning")
+            return
+            
+        item = groups_list.highlighted_child
+        group_data = self.groups_data.get(id(item))
+        if not group_data:
+            self.app.notify("Invalid group selection", severity="warning")
+            return
+            
+        try:
+            from ldap3 import MODIFY_DELETE
+            self.conn.modify(group_data['dn'], {'member': [(MODIFY_DELETE, [self.dn])]})
+            self.app.notify(f"Removed from {group_data['name']}", severity="information")
+            
+            # Update user details and refresh list instead of direct manipulation
+            self._update_user_details()
+            self._refresh_groups_list()
+            
+            # Refocus the list
+            groups_list.focus()
+        except Exception as e:
+            self.app.notify(f"Error removing from group: {e}", severity="error")
     
     def action_add_group(self) -> None:
         """Focus search input to add group."""
@@ -342,14 +396,20 @@ class ManageGroupsDialog(ModalScreen):
         self._search_groups(group_name)
     
     def _add_to_group(self, group_data: dict) -> None:
-        """Add user to the specified group."""
+        """Add user to specified group."""
         try:
             from ldap3 import MODIFY_ADD
             self.conn.modify(group_data['dn'], {'member': [(MODIFY_ADD, [self.dn])]})
             self.app.notify(f"Added to {group_data['name']}", severity="information")
             
-            # Clear search and refresh
-            self.query_one("#group-search", Input).value = ""
+            # Update user details and refresh list
+            self._update_user_details()
+            self._refresh_groups_list()
+            
+            # Clear search input
+            search_input = self.query_one("#group-search", Input)
+            search_input.value = ""
+            search_input.focus()
         except Exception as e:
             self.app.notify(f"Error adding to group: {e}", severity="error")
 
