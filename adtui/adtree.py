@@ -3,11 +3,13 @@ from textual.widgets import Tree
 from ldap3 import Connection
 from functools import lru_cache
 import threading
+from typing import Optional
+from services.connection_manager import ConnectionManager
 
 class ADTree(Tree):
-    def __init__(self, conn, base_dn):
+    def __init__(self, connection_manager: Optional[ConnectionManager], base_dn: str):
         super().__init__("AD Tree")
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.base_dn = base_dn
         self.loaded_ous = set()  # Track which OUs have been populated
         self.ou_cache = {}      # Cache for OU contents
@@ -15,13 +17,13 @@ class ADTree(Tree):
 
     def build_tree(self):
         """Build complete tree structure with direct children only."""
-        if self.conn is None:
+        if self.connection_manager is None:
             return
         try:
             # Clear existing tree nodes
             self.root.remove_children()
             
-            # Start with the base DN as root
+            # Start with base DN as root
             root_node = self.root.add(f"📁 {self.base_dn}", expand=True)
             self._build_direct_children(root_node, self.base_dn)
             
@@ -29,6 +31,8 @@ class ADTree(Tree):
             self.root.expand()
         except Exception as e:
             print(f"Error building tree: {e}")
+            import traceback
+            traceback.print_exc()
     
     def load_root(self):
         """Load root of tree (alias for build_tree)."""
@@ -36,27 +40,33 @@ class ADTree(Tree):
 
     def _build_direct_children(self, parent_node, parent_dn):
         """Build only the direct children of an OU."""
-        if self.conn is None:
-            return
         try:
-            # Search for direct child OUs only
-            self.conn.search(parent_dn, '(objectClass=organizationalUnit)',
+            def search_op(conn: Connection):
+                # Search for direct child OUs only
+                conn.search(parent_dn, '(objectClass=organizationalUnit)',
                            attributes=['ou', 'distinguishedName'],
                            search_scope='LEVEL',
                            size_limit=1000)
 
-            # Sort OUs alphabetically
-            ous = sorted(self.conn.entries, key=lambda x: str(x['ou']).lower())
+                # Sort OUs alphabetically
+                ous = sorted(conn.entries, key=lambda x: str(x['ou']).lower())
 
-            for ou in ous:
-                ou_dn = ou.entry_dn
-                if self._is_direct_child(ou_dn, parent_dn):
-                    ou_name = str(ou['ou']) if 'ou' in ou else "Unknown OU"
-                    ou_node = parent_node.add(f"📁 {ou_name}", expand=False)
-                    ou_node.data = ou_dn
+                for ou in ous:
+                    ou_dn = ou.entry_dn
+                    if self._is_direct_child(ou_dn, parent_dn):
+                        ou_name = str(ou['ou']) if 'ou' in ou else "Unknown OU"
+                        ou_node = parent_node.add(f"📁 {ou_name}", expand=False)
+                        ou_node.data = ou_dn
+            
+            if self.connection_manager:
+                self.connection_manager.execute_with_retry(search_op)
+            else:
+                return
 
         except Exception as e:
             print(f"Error building children for {parent_dn}: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _is_direct_child(self, child_dn, parent_dn):
         """Check if child_dn is a direct child of parent_dn."""
@@ -83,56 +93,60 @@ class ADTree(Tree):
 
     def populate_ou(self, parent_node, ou_dn, synchronous=False):
         """Populate an OU with its contents."""
-        if self.conn is None:
-            return
         try:
             # Check cache first
             if ou_dn in self.ou_cache:
                 self._populate_from_cache(parent_node, ou_dn)
                 return
 
-            # Clear existing children before populating
-            parent_node.remove_children()
+            def populate_op(conn: Connection):
+                # Clear existing children before populating
+                parent_node.remove_children()
 
-            # First add direct child OUs
-            self._build_direct_children(parent_node, ou_dn)
+                # First add direct child OUs
+                self._build_direct_children(parent_node, ou_dn)
 
-            # Search for non-OU objects with a more specific filter
-            self.conn.search(ou_dn,
+                # Search for non-OU objects with a more specific filter
+                conn.search(ou_dn,
                            '(&(objectClass=*)(!(objectClass=organizationalUnit))(objectCategory=*))',
                            search_scope='LEVEL',
                            attributes=['cn', 'objectClass', 'userAccountControl'],
                            size_limit=1000)
 
-            objects = []
-            for entry in self.conn.entries:
-                if self._is_direct_child(entry.entry_dn, ou_dn):
-                    objects.append(entry)
+                objects = []
+                for entry in conn.entries:
+                    if self._is_direct_child(entry.entry_dn, ou_dn):
+                        objects.append(entry)
 
-            # Cache the results
-            self.ou_cache[ou_dn] = objects
+                # Cache the results
+                self.ou_cache[ou_dn] = objects
 
-            # Add objects to the tree
-            for entry in objects:
-                cn = str(entry['cn']) if 'cn' in entry else "Unknown"
-                obj_classes = [str(cls).lower() for cls in entry['objectClass']]
-                entry_dn = entry.entry_dn
-                
-                if 'user' in obj_classes and 'computer' not in obj_classes:
-                    uac = int(entry['userAccountControl'].value)
-                    is_disabled = (uac & 2) == 2
+                # Add objects to the tree
+                for entry in objects:
+                    cn = str(entry['cn']) if 'cn' in entry else "Unknown"
+                    obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+                    entry_dn = entry.entry_dn
+                    
+                    if 'user' in obj_classes and 'computer' not in obj_classes:
+                        uac = int(entry['userAccountControl'].value)
+                        is_disabled = (uac & 2) == 2
 
-                    if is_disabled:
-                        node = parent_node.add_leaf(f"[dim]👤 {cn}[/]")
-                    else:
-                        node = parent_node.add_leaf(f"👤 {cn}")
-                    node.data = entry_dn
-                elif 'computer' in obj_classes:
-                    node = parent_node.add_leaf(f"💻 {cn}")
-                    node.data = entry_dn
-                elif 'group' in obj_classes:
-                    node = parent_node.add_leaf(f"👥 {cn}")
-                    node.data = entry_dn
+                        if is_disabled:
+                            node = parent_node.add_leaf(f"[dim]👤 {cn}[/]")
+                        else:
+                            node = parent_node.add_leaf(f"👤 {cn}")
+                        node.data = entry_dn
+                    elif 'computer' in obj_classes:
+                        node = parent_node.add_leaf(f"💻 {cn}")
+                        node.data = entry_dn
+                    elif 'group' in obj_classes:
+                        node = parent_node.add_leaf(f"👥 {cn}")
+                        node.data = entry_dn
+            
+            if self.connection_manager:
+                self.connection_manager.execute_with_retry(populate_op)
+            else:
+                return
 
         except Exception as e:
             print(f"Error populating OU {ou_dn}: {e}")
@@ -171,58 +185,62 @@ class ADTree(Tree):
 
     def _populate_ou_fresh(self, parent_node, ou_dn):
         """Populate an OU with fresh data (bypassing cache)."""
-        if self.conn is None:
-            return
         try:
-            # Clear existing children before populating
-            parent_node.remove_children()
+            def fresh_populate_op(conn: Connection):
+                # Clear existing children before populating
+                parent_node.remove_children()
 
-            # First add direct child OUs
-            self._build_direct_children(parent_node, ou_dn)
+                # First add direct child OUs
+                self._build_direct_children(parent_node, ou_dn)
 
-            # Search for non-OU objects with a more specific filter
-            self.conn.search(ou_dn,
+                # Search for non-OU objects with a more specific filter
+                conn.search(ou_dn,
                            '(&(objectClass=*)(!(objectClass=organizationalUnit))(objectCategory=*))',
                            search_scope='LEVEL',
                            attributes=['cn', 'objectClass', 'userAccountControl'],
                            size_limit=1000)
 
-            objects = []
-            for entry in self.conn.entries:
-                if self._is_direct_child(entry.entry_dn, ou_dn):
-                    objects.append(entry)
+                objects = []
+                for entry in conn.entries:
+                    if self._is_direct_child(entry.entry_dn, ou_dn):
+                        objects.append(entry)
 
-            # Cache the results
-            self.ou_cache[ou_dn] = objects
+                # Cache the results
+                self.ou_cache[ou_dn] = objects
 
-            # Add objects to the tree
-            for entry in objects:
-                cn = str(entry['cn']) if 'cn' in entry else "Unknown"
-                obj_classes = [str(cls).lower() for cls in entry['objectClass']]
-                entry_dn = entry.entry_dn
-                
-                if 'user' in obj_classes and 'computer' not in obj_classes:
-                    uac = int(entry['userAccountControl'].value)
-                    is_disabled = (uac & 2) == 2
+                # Add objects to the tree
+                for entry in objects:
+                    cn = str(entry['cn']) if 'cn' in entry else "Unknown"
+                    obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+                    entry_dn = entry.entry_dn
+                    
+                    if 'user' in obj_classes and 'computer' not in obj_classes:
+                        uac = int(entry['userAccountControl'].value)
+                        is_disabled = (uac & 2) == 2
 
-                    if is_disabled:
-                        node = parent_node.add_leaf(f"[dim]👤 {cn}[/]")
-                    else:
-                        node = parent_node.add_leaf(f"👤 {cn}")
-                    node.data = entry_dn
-                elif 'computer' in obj_classes:
-                    node = parent_node.add_leaf(f"💻 {cn}")
-                    node.data = entry_dn
-                elif 'group' in obj_classes:
-                    node = parent_node.add_leaf(f"👥 {cn}")
-                    node.data = entry_dn
+                        if is_disabled:
+                            node = parent_node.add_leaf(f"[dim]👤 {cn}[/]")
+                        else:
+                            node = parent_node.add_leaf(f"👤 {cn}")
+                        node.data = entry_dn
+                    elif 'computer' in obj_classes:
+                        node = parent_node.add_leaf(f"💻 {cn}")
+                        node.data = entry_dn
+                    elif 'group' in obj_classes:
+                        node = parent_node.add_leaf(f"👥 {cn}")
+                        node.data = entry_dn
+            
+            if self.connection_manager:
+                self.connection_manager.execute_with_retry(fresh_populate_op)
+            else:
+                return
 
         except Exception as e:
             print(f"Error populating OU {ou_dn}: {e}")
 
     def refresh_current_ou(self):
         """Refresh currently selected OU."""
-        if self.conn is None:
+        if self.connection_manager is None:
             return
         if self.cursor_node and self.cursor_node.data:
             # Clear cache for this OU
@@ -240,7 +258,7 @@ class ADTree(Tree):
     
     def refresh_ou_by_dn(self, ou_dn: str):
         """Refresh a specific OU by finding its node in the tree."""
-        if self.conn is None:
+        if self.connection_manager is None:
             return
         
         # Find the node with this DN

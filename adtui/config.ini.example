@@ -14,18 +14,44 @@ domain = DOMMAN
 base_dn = DC=domman,DC=ad
 use_ssl = false
 
+# Connection retry settings (optional)
+max_retries = 5
+initial_retry_delay = 1.0
+max_retry_delay = 60.0
+health_check_interval = 30.0
+
+# Password policy settings (optional)
+# If not specified, defaults from constants.py will be used
+# max_password_age_days = 120
+# warning_days_critical = 7
+# warning_days_normal = 14
+
+# Password policy settings (optional)
+# If not specified, defaults from constants.py will be used
+# max_password_age_days = 120
+# warning_days_critical = 7
+# warning_days_normal = 14
+
 # Example additional domain configurations
 # [ad_CORP]
 # server = dc1.corp.company.com
 # domain = CORP
 # base_dn = DC=corp,DC=company,DC=com
 # use_ssl = true
+# max_retries = 3
+# initial_retry_delay = 2.0
+# max_retry_delay = 30.0
+# health_check_interval = 15.0
 
 # [ad_TEST]
 # server = test-dc.test.local
 # domain = TEST
 # base_dn = DC=test,DC=local
 # use_ssl = false
+# max_retries = 10
+# initial_retry_delay = 0.5
+# max_retry_delay = 120.0
+# health_check_interval = 60.0
 
 # Legacy single AD support (for backward compatibility)
 # If you only have one AD domain, you can use this format instead
@@ -34,3 +60,9 @@ server = servad4.domman.ad
 domain = DOMMAN
 base_dn = DC=domman,DC=ad
 use_ssl = false
+
+# Connection retry settings (optional)
+max_retries = 5
+initial_retry_delay = 1.0
+max_retry_delay = 60.0
+health_check_interval = 30.0

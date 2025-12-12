@@ -6,6 +6,7 @@ from textual.containers import Vertical, Horizontal, ScrollableContainer
 from textual.widgets import Static, Button, Input, ListView, ListItem, Label, Checkbox
 from typing import Dict
 import unicodedata
+from ldap3 import Connection
 
 
 class BaseConfirmDialog(ModalScreen[bool]):
@@ -141,10 +142,10 @@ class CreateOUDialog(ModalScreen):
 class EditUserDialog(ModalScreen):
     """Dialog to edit user attributes."""
     
-    def __init__(self, dn: str, conn, user_details, base_dn: str):
+    def __init__(self, dn: str, connection_manager, user_details, base_dn: str):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.user_details = user_details
         self.base_dn = base_dn
     
@@ -188,22 +189,30 @@ class EditUserDialog(ModalScreen):
                                  'physicalDeliveryOfficeName', 'department', 'title', 'description', 
                                  'profilePath', 'homeDirectory']
                 
-                # Process required fields
-                for field in required_fields:
-                    value = self.query_one(f"#{field}", Input).value.strip()
-                    if value:  # Only update if not empty
-                        self.conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
+                def update_user_op(conn: Connection):
+                    # Process required fields
+                    for field in required_fields:
+                        value = self.query_one(f"#{field}", Input).value.strip()
+                        if value:  # Only update if not empty
+                            conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
+                    
+                    # Process optional fields
+                    for field in optional_fields:
+                        value = self.query_one(f"#{field}", Input).value.strip()
+                        if value:  # Update with new value if not empty
+                            conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
+                        else:  # Delete the attribute if empty
+                            # Check if the attribute currently exists before trying to delete
+                            entry = self.user_details.entry
+                            if hasattr(entry, field):
+                                try:
+                                    conn.modify(self.dn, {field: [(MODIFY_DELETE, [])]})
+                                except Exception as e:
+                                    # Attribute might not exist or cannot be deleted, continue
+                                    print(f"Could not delete {field}: {e}")
                 
-                # Process optional fields
-                for field in optional_fields:
-                    value = self.query_one(f"#{field}", Input).value.strip()
-                    if value:  # Update with new value if not empty
-                        self.conn.modify(self.dn, {field: [(MODIFY_REPLACE, [value])]})
-                    else:  # Delete the attribute if empty
-                        # Check if the attribute currently exists before trying to delete
-                        entry = self.user_details.entry
-                        if hasattr(entry, field):
-                            self.conn.modify(self.dn, {field: [(MODIFY_DELETE, [])]})
+                if self.connection_manager:
+                    self.connection_manager.execute_with_retry(update_user_op)
                 
                 self.app.notify("User updated successfully", severity="information")
                 self.dismiss(True)
@@ -222,10 +231,10 @@ class ManageGroupsDialog(ModalScreen):
         ("a", "add_group", "Add Group"),
     ]
     
-    def __init__(self, dn: str, conn, user_details, base_dn: str):
+    def __init__(self, dn: str, connection_manager, user_details, base_dn: str):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.user_details = user_details
         self.base_dn = base_dn
         self.groups_data = {}
@@ -282,7 +291,7 @@ class ManageGroupsDialog(ModalScreen):
             # Re-fetch user details to get current group memberships
             from widgets.user_details import UserDetailsPane
             temp_user_details = UserDetailsPane()
-            temp_user_details.update_user_details(self.dn, self.conn)
+            temp_user_details.update_user_details(self.dn, self.connection_manager)
             self.user_details = temp_user_details
         except Exception as e:
             self.app.notify(f"Error refreshing user details: {e}", severity="error")
@@ -302,7 +311,11 @@ class ManageGroupsDialog(ModalScreen):
             
         try:
             from ldap3 import MODIFY_DELETE
-            self.conn.modify(group_data['dn'], {'member': [(MODIFY_DELETE, [self.dn])]})
+            
+            def remove_group_op(conn):
+                conn.modify(group_data['dn'], {'member': [(MODIFY_DELETE, [self.dn])]})
+            
+            self.connection_manager.execute_with_retry(remove_group_op)
             self.app.notify(f"Removed from {group_data['name']}", severity="information")
             
             # Update user details and refresh list instead of direct manipulation
@@ -339,20 +352,24 @@ class ManageGroupsDialog(ModalScreen):
         """Search for groups matching query and show in list."""
         try:
             # Use domain base DN to search all groups in AD, not just user's OU
-            self.conn.search(
-                self.base_dn,
-                f'(&(objectClass=group)(cn=*{query}*))',
-                attributes=['cn', 'distinguishedName'],
-                size_limit=50
-            )
+            def search_groups_op(conn):
+                conn.search(
+                    self.base_dn,
+                    f'(&(objectClass=group)(cn=*{query}*))',
+                    attributes=['cn', 'distinguishedName'],
+                    size_limit=50
+                )
+                return conn.entries
+            
+            entries = self.connection_manager.execute_with_retry(search_groups_op)
             
             # Clear and show search results
             groups_list = self.query_one("#groups-list", ListView)
             groups_list.clear()
             self.groups_data.clear()
             
-            if self.conn.entries:
-                for entry in self.conn.entries:
+            if entries:
+                for entry in entries:
                     group_name = str(entry.cn.value)
                     group_dn = entry.entry_dn
                     
@@ -364,7 +381,7 @@ class ManageGroupsDialog(ModalScreen):
                     self.groups_data[id(item)] = {'name': group_name, 'dn': group_dn, 'is_member': is_member}
                     groups_list.append(item)
                 
-                self.app.notify(f"Found {len(self.conn.entries)} groups", severity="information")
+                self.app.notify(f"Found {len(entries)} groups", severity="information")
             else:
                 self.app.notify(f"No groups found matching '{query}'", severity="information")
         except Exception as e:
@@ -399,7 +416,11 @@ class ManageGroupsDialog(ModalScreen):
         """Add user to specified group."""
         try:
             from ldap3 import MODIFY_ADD
-            self.conn.modify(group_data['dn'], {'member': [(MODIFY_ADD, [self.dn])]})
+            
+            def add_to_group_op(conn):
+                conn.modify(group_data['dn'], {'member': [(MODIFY_ADD, [self.dn])]})
+            
+            self.connection_manager.execute_with_retry(add_to_group_op)
             self.app.notify(f"Added to {group_data['name']}", severity="information")
             
             # Update user details and refresh list
@@ -421,10 +442,10 @@ class ManageGroupMembersDialog(ModalScreen):
         ("escape", "dismiss_dialog", "Close"),
     ]
     
-    def __init__(self, dn: str, conn, group_details):
+    def __init__(self, dn: str, connection_manager, group_details):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.group_details = group_details
     
     def compose(self) -> ComposeResult:
@@ -456,16 +477,12 @@ class ManageGroupMembersDialog(ModalScreen):
 
 
 class EditAttributesDialog(ModalScreen):
-    """Dialog to view and edit all LDAP attributes."""
+    """Dialog to edit object attributes."""
     
-    BINDINGS = [
-        ("escape", "dismiss_dialog", "Close"),
-    ]
-    
-    def __init__(self, dn: str, conn):
+    def __init__(self, dn: str, connection_manager):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.attributes = {}
     
     def compose(self) -> ComposeResult:
@@ -482,14 +499,18 @@ class EditAttributesDialog(ModalScreen):
     def on_mount(self) -> None:
         """Load and display all attributes."""
         try:
-            self.conn.search(
-                self.dn,
-                '(objectClass=*)',
-                search_scope='BASE',
-                attributes=['*']
-            )
-            if self.conn.entries:
-                entry = self.conn.entries[0]
+            def load_attributes_op(conn):
+                conn.search(
+                    self.dn,
+                    '(objectClass=*)',
+                    search_scope='BASE',
+                    attributes=['*']
+                )
+                return conn.entries
+            
+            entries = self.connection_manager.execute_with_retry(load_attributes_op)
+            if entries:
+                entry = entries[0]
                 attrs_list = self.query_one("#attributes-list", ListView)
                 
                 for attr in sorted(entry.entry_attributes_as_dict.keys()):
@@ -524,7 +545,7 @@ class EditAttributesDialog(ModalScreen):
         if attr_data:
             # Open edit dialog for this attribute
             self.app.push_screen(
-                EditSingleAttributeDialog(self.dn, self.conn, attr_data['name'], attr_data['values']),
+                EditSingleAttributeDialog(self.dn, self.connection_manager, attr_data['name'], attr_data['values']),
                 self._refresh_after_edit
             )
     
@@ -544,10 +565,10 @@ class EditAttributesDialog(ModalScreen):
 class EditSingleAttributeDialog(ModalScreen):
     """Dialog to edit a single attribute."""
     
-    def __init__(self, dn: str, conn, attr_name: str, current_values):
+    def __init__(self, dn: str, connection_manager, attr_name: str, current_values):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.attr_name = attr_name
         self.current_values = current_values
     
@@ -572,17 +593,28 @@ class EditSingleAttributeDialog(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             try:
-                from ldap3 import MODIFY_REPLACE
+                from ldap3 import MODIFY_REPLACE, MODIFY_DELETE
                 new_value = self.query_one("#attr-value", Input).value.strip()
                 
                 if new_value:
                     # Split by newlines for multi-value
                     values = [v.strip() for v in new_value.split('\n') if v.strip()]
-                    self.conn.modify(self.dn, {self.attr_name: [(MODIFY_REPLACE, values)]})
+                    
+                    def update_attr_op(conn):
+                        conn.modify(self.dn, {self.attr_name: [(MODIFY_REPLACE, values)]})
+                    
+                    self.connection_manager.execute_with_retry(update_attr_op)
                     self.app.notify(f"Updated {self.attr_name}", severity="information")
                     self.dismiss(True)
                 else:
-                    self.app.notify("Value cannot be empty", severity="warning")
+                    # Delete the attribute if value is empty
+                    
+                    def delete_attr_op(conn):
+                        conn.modify(self.dn, {self.attr_name: [(MODIFY_DELETE, [])]})
+                    
+                    self.connection_manager.execute_with_retry(delete_attr_op)
+                    self.app.notify(f"Deleted {self.attr_name}", severity="information")
+                    self.dismiss(True)
             except Exception as e:
                 self.app.notify(f"Error: {e}", severity="error")
         else:
@@ -624,10 +656,10 @@ def validate_password_complexity(password: str) -> tuple[bool, list[str]]:
 class SetPasswordDialog(ModalScreen):
     """Dialog to set user password."""
     
-    def __init__(self, dn: str, conn):
+    def __init__(self, dn: str, connection_manager):
         super().__init__()
         self.dn = dn
-        self.conn = conn
+        self.connection_manager = connection_manager
     
     def _validate_password_complexity(self, password: str) -> bool:
         """Validate password meets AD complexity requirements."""
@@ -706,8 +738,13 @@ class SetPasswordDialog(ModalScreen):
                 
                 # Set password using ldap3 Microsoft extension for Active Directory
                 # Check if connection is secure (required for password operations)
-                if not self.conn.server.ssl:
-                    self.app.notify("Password changes require SSL/TLS connection. Enable use_ssl in config.ini", severity="error")
+                if hasattr(self.connection_manager, 'get_connection'):
+                    conn = self.connection_manager.get_connection()
+                    if hasattr(conn, 'server') and not conn.server.ssl:
+                        self.app.notify("Password changes require SSL/TLS connection. Enable use_ssl in config.ini", severity="error")
+                        return
+                else:
+                    self.app.notify("No connection available", severity="error")
                     return
                 
                 # Validate password complexity for AD
@@ -717,23 +754,19 @@ class SetPasswordDialog(ModalScreen):
                     self.app.notify(error_msg, severity="warning")
                     return
                 
-                # Use Microsoft extension for password modification (handles encoding automatically)
-                result = self.conn.extend.microsoft.modify_password(self.dn, pwd1)
-                
-                if result and self.conn.result['result'] == 0:
-                    self.app.notify("Password updated successfully", severity="information")
-                    self.dismiss(True)
-                else:
-                    error_msg = self.conn.result.get('message', 'Unknown error')
-                    error_desc = self.conn.result.get('description', 'No description')
+                def set_password_op(conn: Connection):
+                    # Use Microsoft extension for password modification (handles encoding automatically)
+                    result = conn.extend.microsoft.modify_password(self.dn, pwd1)
                     
-                    # Provide more helpful error messages
-                    if "insufficient rights" in str(error_msg).lower():
-                        self.app.notify("Failed: Insufficient rights. Need password reset permissions.", severity="error")
-                    elif "constraint violation" in str(error_desc).lower():
-                        self.app.notify("Failed: Password doesn't meet complexity requirements.", severity="error")
+                    if result and conn.result['result'] == 0:
+                        self.app.notify("Password updated successfully", severity="information")
+                        self.dismiss(True)
                     else:
-                        self.app.notify(f"Failed to set password: {error_msg}", severity="error")
+                        error_msg = conn.result.get('message', 'Unknown error')
+                        error_desc = conn.result.get('description', 'No description')
+                
+                if self.connection_manager:
+                    self.connection_manager.execute_with_retry(set_password_op)
             except Exception as e:
                 self.app.notify(f"Error setting password: {e}", severity="error")
                 import traceback
@@ -1196,10 +1229,11 @@ class LoginDialog(ModalScreen):
     }
     """
     
-    def __init__(self, last_user: str, domain: str):
+    def __init__(self, last_user: str, domain: str, ad_config=None):
         super().__init__()
         self.last_user = last_user
         self.domain = domain
+        self.ad_config = ad_config
     
     def compose(self) -> ComposeResult:
         ascii_art = """[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]

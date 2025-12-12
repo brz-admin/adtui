@@ -15,49 +15,32 @@ class UserDetailsPane(Static):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.user_dn = None
-        self.connection_manager = None
+        self.conn = None
         self.entry = None
         self.member_of = []
         self.raw_attributes = {}
-        self.load_error = None
 
-    def update_user_details(self, user_dn, connection_manager):
+    def update_user_details(self, user_dn, conn):
         """Load and display user details."""
-        print(f"DEBUG: update_user_details called with DN: {user_dn}")
-        print(f"DEBUG: connection_manager type: {type(connection_manager)}")
-        print(f"DEBUG: connection_manager object: {connection_manager}")
-        
+        print(f"update_user_details called with DN: {user_dn}")
         self.user_dn = user_dn
-        self.connection_manager = connection_manager
-        self.load_error = None  # Clear any previous error
+        self.conn = conn
         self.load_user_details()
-        print(f"DEBUG: load_user_details completed. Entry: {self.entry is not None}")
-        
-        if not self.entry:
-            print("DEBUG: No entry found after load_user_details")
+        print(f"load_user_details completed. Entry: {self.entry is not None}")
 
     def load_user_details(self):
         """Fetch user details from LDAP."""
-        print(f"DEBUG: load_user_details: Searching for {self.user_dn}")
-        print(f"DEBUG: connection_manager type: {type(self.connection_manager)}")
-        print(f"DEBUG: connection_manager has execute_with_retry: {hasattr(self.connection_manager, 'execute_with_retry')}")
-        
+        print(f"load_user_details: Searching for {self.user_dn}")
         try:
-            def search_user_op(conn):
-                conn.search(
-                    self.user_dn,
-                    '(objectClass=*)',
-                    search_scope='BASE',
-                    attributes=['*']
-                )
-                return conn.entries
-            
-            entries = self.connection_manager.execute_with_retry(search_user_op)
-            print(f"DEBUG: Search completed. Entries found: {len(entries)}")
-            if entries:
-                self.entry = entries[0]
-                print(f"DEBUG: Entry assigned: {self.entry}")
-                
+            self.conn.search(
+                self.user_dn,
+                '(objectClass=*)',
+                search_scope='BASE',
+                attributes=['*']
+            )
+            print(f"Search completed. Entries found: {len(self.conn.entries)}")
+            if self.conn.entries:
+                self.entry = self.conn.entries[0]
                 # Extract member of groups (just the CN)
                 if hasattr(self.entry, 'memberOf') and self.entry.memberOf:
                     self.member_of = [
@@ -72,37 +55,11 @@ class UserDetailsPane(Static):
                 
                 # Store raw attributes
                 if hasattr(self.entry, 'entry_attributes'):
-                    try:
-                        # Safely convert entry_attributes to dict
-                        if hasattr(self.entry.entry_attributes, 'items'):
-                            # If it's already dict-like
-                            self.raw_attributes = dict(self.entry.entry_attributes.items())
-                        else:
-                            # Try direct conversion, handle potential errors
-                            self.raw_attributes = {}
-                            for attr, values in self.entry.entry_attributes:
-                                self.raw_attributes[attr] = values
-                    except Exception as e:
-                        print(f"DEBUG: Error converting entry_attributes: {e}")
-                        self.raw_attributes = {}
-            else:
-                print("DEBUG: No entries found in search results")
-                self.entry = None
+                    self.raw_attributes = dict(self.entry.entry_attributes)
         except Exception as e:
-            print(f"DEBUG: Error in load_user_details: {e}")
-            print(f"DEBUG: Exception type: {type(e)}")
+            print(f"Error loading user details: {e}")
             import traceback
             traceback.print_exc()
-            
-            # Set entry to None but also store the error message for display
-            self.entry = None
-            self.load_error = str(e)
-            
-            # Re-raise authentication errors so they can be handled by connection manager
-            error_msg = str(e)
-            if "Authentication failed" in error_msg or "authentication" in error_msg.lower():
-                print("DEBUG: Re-raising authentication error for proper handling")
-                raise  # Re-raise to allow connection manager to handle it
 
     def refresh_display(self):
         """Refresh the displayed content."""
@@ -116,12 +73,8 @@ class UserDetailsPane(Static):
         """Build the content string for display."""
         print(f"_build_content called. Entry exists: {self.entry is not None}")
         if not self.entry:
-            if hasattr(self, 'load_error') and self.load_error:
-                print(f"Load error: {self.load_error}")
-                return f"[red]Error loading user details: {self.load_error}[/red]"
-            else:
-                print("No entry found, returning 'No user data'")
-                return "No user data"
+            print("No entry found, returning 'No user data'")
+            return "No user data"
         
         # General Information
         cn = str(self.entry.cn.value) if hasattr(self.entry, 'cn') else "N/A"
@@ -207,17 +160,8 @@ class UserDetailsPane(Static):
                 if pwd_last_set_dt and not password_never_expires:
                     max_pwd_age_days = PasswordPolicy.MAX_AGE_DAYS
                     pwd_expires = pwd_last_set_dt + timedelta(days=max_pwd_age_days)
-                    
-                    # Handle timezone properly for days calculation
-                    if pwd_last_set_dt.tzinfo is not None:
-                        # If we have timezone info, use timezone-aware now()
-                        now = datetime.now(pwd_last_set_dt.tzinfo)
-                    else:
-                        # If no timezone info, use naive datetime
-                        now = datetime.now()
-                    
-                    days_until_expiry = (pwd_expires - now).days
-                    print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires}, now: {now})")
+                    days_until_expiry = (pwd_expires - datetime.now(pwd_last_set_dt.tzinfo)).days
+                    print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires})")
                     
                     if days_until_expiry < 0:
                         pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
@@ -234,11 +178,6 @@ class UserDetailsPane(Static):
                     # We have pwdLastSet but couldn't parse it properly
                     print(f"DEBUG: Unable to calculate password expiry. pwdLastSet value: {getattr(self.entry.pwdLastSet, 'value', 'N/A')}")
                     pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
-                elif not hasattr(self.entry, 'pwdLastSet') or not self.entry.pwdLastSet.value:
-                    # No pwdLastSet attribute at all
-                    if not password_never_expires:
-                        print("DEBUG: No pwdLastSet attribute found, cannot calculate expiry")
-                        pwd_expiry_info = "[yellow]Password expiry unknown (no last set date)[/yellow]"
             except Exception as e:
                 pwd_last_set_value = self.entry.pwdLastSet.value
                 pwd_last_set = str(pwd_last_set_value)
@@ -264,15 +203,8 @@ class UserDetailsPane(Static):
                             if not password_never_expires:
                                 max_pwd_age_days = PasswordPolicy.MAX_AGE_DAYS
                                 pwd_expires = pwd_last_set_dt + timedelta(days=max_pwd_age_days)
-                                
-                                # Handle timezone properly for days calculation
-                                if pwd_last_set_dt.tzinfo is not None:
-                                    now = datetime.now(pwd_last_set_dt.tzinfo)
-                                else:
-                                    now = datetime.now()
-                                
-                                days_until_expiry = (pwd_expires - now).days
-                                print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires}, now: {now})")
+                                days_until_expiry = (pwd_expires - datetime.now(pwd_last_set_dt.tzinfo)).days
+                                print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires})")
                                 
                                 if days_until_expiry < 0:
                                     pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"

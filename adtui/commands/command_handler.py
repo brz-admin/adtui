@@ -53,6 +53,9 @@ class CommandHandler:
 
             # User management commands
             'unlock': self._handle_unlock,
+            
+            # Debug commands
+            'debug-tree': self._handle_debug_tree,
             'createuser': self._handle_create_user,
             'cu': self._handle_create_user,
             'copyuser': self._handle_copy_user,
@@ -113,7 +116,7 @@ class CommandHandler:
         
         try:
             results = self.app.ldap_service.search_objects(query)
-            self.app.search_results_pane.populate(results, self.app.conn)
+            self.app.search_results_pane.populate(results, self.app.connection_manager)
             self.app.search_results_pane.styles.display = "block"
             # Focus the search results
             self.app.search_results_pane.focus()
@@ -186,7 +189,7 @@ class CommandHandler:
         """Handle recycle bin view command."""
         try:
             results = self.app.ldap_service.get_deleted_objects()
-            self.app.search_results_pane.populate(results)
+            self.app.search_results_pane.populate(results, self.app.connection_manager)
             self.app.notify(f"Found {len(results)} deleted objects. Use :restore <name> to restore.", 
                            severity=Severity.INFORMATION.value)
         except Exception as e:
@@ -418,3 +421,18 @@ Full LDAP DN also works:
         
         # Fallback to base DN
         return self.app.ldap_service.base_dn if self.app.ldap_service else self.app.base_dn
+    
+    def _handle_debug_tree(self, args: str) -> None:
+        """Handle debug tree command - rebuild tree."""
+        try:
+            self.app.notify("Rebuilding AD tree...", severity="information")
+            
+            if hasattr(self.app, 'adtree') and self.app.adtree and self.app.adtree.connection_manager:
+                self.app.adtree.build_tree()
+                self.app.notify("Tree rebuilt successfully", severity="information")
+            else:
+                self.app.notify("ADTree not available", severity="error")
+        except Exception as e:
+            self.app.notify(f"Error rebuilding tree: {e}", severity="error")
+            import traceback
+            traceback.print_exc()

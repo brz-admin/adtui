@@ -15,6 +15,7 @@ from adtree import ADTree
 from widgets.details_pane import DetailsPane
 from services import LDAPService, HistoryService, PathService
 from services.config_service import ConfigService, ADConfig
+from services.connection_manager import ConnectionManager, ConnectionState
 from commands import CommandHandler
 from ui.dialogs import ConfirmDeleteDialog, ConfirmMoveDialog, ConfirmRestoreDialog, ConfirmUndoDialog, CreateOUDialog, ADSelectionDialog, LoginDialog
 from constants import Severity, MESSAGES
@@ -28,8 +29,8 @@ if os.path.exists(LAST_USER_FILE):
         last_user = f.read().strip()
 
 
-def get_ldap_connection(username: str, password: str, ad_config: ADConfig) -> Connection:
-    """Create and return an Active Directory connection.
+def create_connection_manager(username: str, password: str, ad_config: ADConfig) -> ConnectionManager:
+    """Create and return a connection manager for Active Directory.
     
     Args:
         username: AD username
@@ -37,31 +38,33 @@ def get_ldap_connection(username: str, password: str, ad_config: ADConfig) -> Co
         ad_config: AD configuration object
         
     Returns:
-        Active LDAP connection
+        Connection manager instance
         
     Raises:
         Exception: If connection fails
     """
-    bind_dn = f"{username}@{ad_config.domain}"
-    port = 636 if ad_config.use_ssl else 389
-    server = Server(ad_config.server, port=port, use_ssl=ad_config.use_ssl, get_info=ALL)
+    # For password operations, AD requires SSL/TLS
+    if not ad_config.use_ssl:
+        print("WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini")
+    
     try:
-        # For password operations, AD requires SSL/TLS
+        # Create connection manager with retry settings from config
+        manager = ConnectionManager(
+            ad_config=ad_config,
+            username=username,
+            password=password,
+            max_retries=ad_config.max_retries,
+            initial_retry_delay=ad_config.initial_retry_delay,
+            max_retry_delay=ad_config.max_retry_delay,
+            health_check_interval=ad_config.health_check_interval
+        )
+        
         if not ad_config.use_ssl:
-            print("WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini")
-        
-        conn = Connection(server, user=bind_dn, password=password, auto_bind=True)
-        
-        # Test if we can perform password operations
-        if ad_config.use_ssl:
-            # Connection is ready for password operations
-            pass
-        else:
             print("INFO: Connected without SSL. Password operations will be disabled.")
         
-        return conn
+        return manager
     except Exception as e:
-        print(f"Failed to connect: {e}")
+        print(f"Failed to create connection manager: {e}")
         raise
 
 
@@ -70,17 +73,17 @@ class SearchResultsPane(ListView):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.conn = None
+        self.connection_manager = None
 
-    def populate(self, results, conn=None):
+    def populate(self, results, connection_manager=None):
         """Populate the search results pane.
         
         Args:
             results: List of result dictionaries with 'label' and 'dn'
-            conn: Optional LDAP connection
+            connection_manager: Optional ConnectionManager instance
         """
         self.clear()
-        self.conn = conn
+        self.connection_manager = connection_manager
         for result in results:
             item = ListItem(Label(result["label"]))
             item.text = result["label"]
@@ -126,10 +129,12 @@ class ADTUI(App):
         # Only establish connection if credentials are provided
         if username is not None and password is not None and ad_config is not None:
             self.base_dn = ad_config.base_dn
-            self.conn = get_ldap_connection(username, password, ad_config)
+            self.connection_manager = create_connection_manager(username, password, ad_config)
+            # Set auth failure callback immediately so it's available even if initial connection fails
+            self.connection_manager.set_auth_failure_callback(self._on_authentication_failure)
             self._initialize_services()
         else:
-            self.conn = None
+            self.connection_manager = None
             self.ldap_service = None
             self.history_service = None
             self.path_service = None
@@ -148,11 +153,14 @@ class ADTUI(App):
         # Current selection
         self.current_selected_dn: Optional[str] = None
         self.current_selected_label: Optional[str] = None
+        
+        # Connection status
+        self.connection_status_widget = None
     
     def _initialize_services(self):
         """Initialize services after connection is established."""
         # Initialize services
-        self.ldap_service = LDAPService(self.conn, self.base_dn)
+        self.ldap_service = LDAPService(self.connection_manager, self.base_dn)
         self.history_service = HistoryService(max_size=50)
         self.path_service = PathService(self.base_dn)
         
@@ -160,7 +168,7 @@ class ADTUI(App):
         self.command_handler = CommandHandler(self)
         
         # Initialize widgets
-        self.adtree = ADTree(self.conn, self.base_dn)
+        self.adtree = ADTree(self.connection_manager, self.base_dn)
         self.details = DetailsPane(id="details-pane")
         self.search_results_pane = SearchResultsPane(id="search-results-pane")
         
@@ -168,9 +176,37 @@ class ADTUI(App):
         self.pending_delete_dn: Optional[str] = None
         self.pending_move_dn: Optional[str] = None
         self.pending_move_target: Optional[str] = None
+        
+        # Set up connection state monitoring
+        self.connection_manager.add_state_change_callback(self._on_connection_state_change)
+        
+        # Set up authentication failure callback
+        self.connection_manager.set_auth_failure_callback(self._on_authentication_failure)
+        
+        # Initialize connection status display
+        if hasattr(self, 'connection_status_widget') and self.connection_status_widget:
+            initial_state = self.connection_manager.get_state()
+            self._update_connection_status_display(initial_state)
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
+        # Ensure all required attributes exist
+        if not hasattr(self, 'adtree') or self.adtree is None:
+            from adtree import ADTree
+            self.base_dn = getattr(self, 'base_dn', '')
+            self.adtree = ADTree(None, self.base_dn)
+        
+        if not hasattr(self, 'details') or self.details is None:
+            self.details = DetailsPane(id="details-pane")
+            
+        if not hasattr(self, 'search_results_pane') or self.search_results_pane is None:
+            self.search_results_pane = SearchResultsPane(id="search-results-pane")
+        
+        # Connection status widget at the top
+        from textual.widgets import Static
+        self.connection_status_widget = Static("🔴 Disconnected", id="connection-status")
+        yield self.connection_status_widget
+        
         with Horizontal():
             with Vertical():
                 yield self.adtree
@@ -186,8 +222,15 @@ class ADTUI(App):
         cmd_input.visible = False
         self._update_footer()
         
+        # Initialize connection status display
+        if hasattr(self, 'connection_manager') and self.connection_manager:
+            initial_state = self.connection_manager.get_state()
+            self._update_connection_status_display(initial_state)
+        
         # Expand tree to show root level on startup with delay to ensure initialization
         self.set_timer(0.5, self._expand_tree_on_startup)
+        # Also try to rebuild tree after a longer delay to ensure connection is ready
+        self.set_timer(2.0, self._delayed_tree_rebuild)
 
     # ==================== Command Mode Actions ====================
     
@@ -254,7 +297,7 @@ class ADTUI(App):
             self.notify("No object selected", severity="warning")
             return
         from ui.dialogs import EditAttributesDialog
-        self.push_screen(EditAttributesDialog(self.current_selected_dn, self.conn))
+        self.push_screen(EditAttributesDialog(self.current_selected_dn, self.connection_manager))
     
     def action_manage_groups(self):
         """Manage groups for selected object."""
@@ -268,14 +311,14 @@ class ADTUI(App):
             # Need to load user details first
             from widgets.user_details import UserDetailsPane
             user_details = UserDetailsPane()
-            user_details.update_user_details(self.current_selected_dn, self.conn)
-            self.push_screen(ManageGroupsDialog(self.current_selected_dn, self.conn, user_details, self.base_dn))
+            user_details.update_user_details(self.current_selected_dn, self.connection_manager)
+            self.push_screen(ManageGroupsDialog(self.current_selected_dn, self.connection_manager, user_details, self.base_dn))
         elif self.current_selected_label and "👥" in str(self.current_selected_label):
             from ui.dialogs import ManageGroupMembersDialog
             from widgets.group_details import GroupDetailsPane
             group_details = GroupDetailsPane()
-            group_details.update_group_details(self.current_selected_dn, self.conn)
-            self.push_screen(ManageGroupMembersDialog(self.current_selected_dn, self.conn, group_details))
+            group_details.update_group_details(self.current_selected_dn, self.connection_manager)
+            self.push_screen(ManageGroupMembersDialog(self.current_selected_dn, self.connection_manager, group_details))
         else:
             self.notify("Group management only available for users and groups", severity="warning")
     
@@ -287,7 +330,7 @@ class ADTUI(App):
         
         if self.current_selected_label and "👤" in str(self.current_selected_label):
             from ui.dialogs import SetPasswordDialog
-            self.push_screen(SetPasswordDialog(self.current_selected_dn, self.conn))
+            self.push_screen(SetPasswordDialog(self.current_selected_dn, self.connection_manager))
         else:
             self.notify("Password setting only available for users", severity="warning")
 
@@ -315,6 +358,77 @@ class ADTUI(App):
         # User-specific commands are now hidden from footer by default
         # They remain functional and visible in details pane when appropriate
         pass
+    
+    def _on_connection_state_change(self, state: ConnectionState, error: Optional[str] = None):
+        """Handle connection state changes.
+        
+        Args:
+            state: New connection state
+            error: Optional error message
+        """
+        if state == ConnectionState.CONNECTED:
+            self.notify("Connected to Active Directory", severity="information")
+            # Rebuild tree when connection is established
+            if hasattr(self, 'adtree') and self.adtree:
+                self.adtree.build_tree()
+        elif state == ConnectionState.RECONNECTING:
+            self.notify(f"Reconnecting to AD... {error or ''}", severity="warning")
+        elif state == ConnectionState.FAILED:
+            self.notify(f"Connection failed: {error or 'Unknown error'}", severity="error")
+        
+        # Update connection status indicator if it exists
+        if self.connection_status_widget:
+            self._update_connection_status_display(state)
+    
+    def _on_authentication_failure(self):
+        """Handle authentication failure - exit to restart login flow."""
+        try:
+            print("DEBUG: _on_authentication_failure called")
+            self.notify("Authentication failed. Please check your credentials.", severity="error")
+            
+            # Clear current connection and services
+            self.connection_manager = None
+            self.ldap_service = None
+            self.history_service = None
+            self.path_service = None
+            self.command_handler = None
+            
+            # Reset tree to empty state
+            if hasattr(self, 'adtree') and self.adtree:
+                self.adtree = ADTree(None, self.base_dn)
+            
+            # Clear details pane
+            if hasattr(self, 'details') and self.details:
+                self.details.update_content("No connection", None, None)
+            
+            # Exit main app to trigger login restart in main script
+            print("DEBUG: Exiting main app to restart login flow")
+            self.exit()
+            
+        except Exception as e:
+            print(f"Error in authentication failure handler: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _update_connection_status_display(self, state: ConnectionState):
+        """Update the connection status widget display.
+        
+        Args:
+            state: Current connection state
+        """
+        if not self.connection_status_widget:
+            return
+        
+        status_map = {
+            ConnectionState.CONNECTED: "🟢 Connected",
+            ConnectionState.CONNECTING: "🟡 Connecting...",
+            ConnectionState.RECONNECTING: "🟡 Reconnecting...",
+            ConnectionState.DISCONNECTED: "🔴 Disconnected",
+            ConnectionState.FAILED: "🔴 Connection Failed"
+        }
+        
+        status_text = status_map.get(state, "❓ Unknown")
+        self.connection_status_widget.update(status_text)
 
     # ==================== Input Handling ====================
 
@@ -353,16 +467,10 @@ class ADTUI(App):
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """Handle tree node selection."""
         node = event.node
-        print(f"\n*** TREE NODE SELECTED ***")
-        print(f"Node label: {node.label}")
-        print(f"Node data (DN): {node.data}")
-        print(f"Label type: {type(node.label)}")
         self.current_selected_dn = node.data
         self.current_selected_label = node.label
-        print(f"Calling details.update_content...")
-        self.details.update_content(node.label, node.data, self.conn)
+        self.details.update_content(node.label, node.data, self.connection_manager)
         self._update_footer()
-        print(f"*** TREE NODE SELECTED END ***\n")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted):
         """Handle list view highlighting."""
@@ -371,7 +479,7 @@ class ADTUI(App):
             if hasattr(item, 'data') and item.data:
                 self.current_selected_dn = item.data
                 self.current_selected_label = item.text
-                self.details.update_content(item.text, item.data, self.conn)
+                self.details.update_content(item.text, item.data, self.connection_manager)
                 self._update_footer()
 
     def on_list_view_selected(self, event: ListView.Selected):
@@ -399,7 +507,7 @@ class ADTUI(App):
                     # Search result: show details and expand tree
                     self.current_selected_dn = item.data
                     self.current_selected_label = item.text
-                    self.details.update_content(item.text, item.data, self.conn)
+                    self.details.update_content(item.text, item.data, self.connection_manager)
                     # Hide search results first
                     self.search_results_pane.styles.display = "none"
                     # Expand tree with slightly longer delay to ensure UI is ready
@@ -539,7 +647,10 @@ class ADTUI(App):
     def _expand_tree_on_startup(self) -> None:
         """Expand tree to show root level on startup."""
         try:
-            if self.adtree and self.adtree.conn and self.adtree.root and self.adtree.root.children:
+            if (hasattr(self, 'adtree') and self.adtree and 
+                hasattr(self.adtree, 'connection_manager') and self.adtree.connection_manager and 
+                hasattr(self.adtree, 'root') and self.adtree.root and 
+                hasattr(self.adtree.root, 'children') and self.adtree.root.children):
                 root_node = self.adtree.root.children[0]  # Base DN node
                 # Ensure root node is expanded and loaded
                 if not root_node.is_expanded:
@@ -548,6 +659,15 @@ class ADTUI(App):
         except Exception as e:
             # Silently fail - tree expansion is a nice-to-have feature
             pass
+    
+    def _delayed_tree_rebuild(self) -> None:
+        """Rebuild tree after delay to ensure connection is ready."""
+        try:
+            if hasattr(self, 'adtree') and self.adtree and self.adtree.connection_manager:
+                self.adtree.build_tree()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
     
     # ==================== Autocomplete ====================
 
@@ -587,7 +707,7 @@ class ADTUI(App):
                 })
             
             if suggestions:
-                self.search_results_pane.populate(suggestions, self.conn)
+                self.search_results_pane.populate(suggestions, self.connection_manager)
                 self.search_results_pane.styles.display = "block"
                 # Auto focus if requested
                 if len(suggestions) == 1 and not search_prefix:
@@ -597,7 +717,6 @@ class ADTUI(App):
                 self.search_results_pane.clear()
                 self.search_results_pane.styles.display = "none"
         except Exception as e:
-            print(f"Autocomplete error: {e}")
             pass
 
     # ==================== Delete Operations ====================
@@ -623,16 +742,10 @@ class ADTUI(App):
         
         if success:
             self.notify(message, severity=Severity.INFORMATION.value)
-            self.current_selected_dn = None
-            self.current_selected_label = None
-            self.details.update_content(None)
-            self._update_footer()
-            
-            # Refresh the parent OU to show the deletion
-            if parent_ou:
-                self.refresh_specific_ou(parent_ou)
-            else:
-                self.action_refresh_ou()  # Fallback to current selection
+            self.current_selected_dn = new_dn
+            if self.current_selected_label:
+                self.details.update_content(self.current_selected_label, new_dn, self.connection_manager)
+            self.action_refresh_ou()
         else:
             self.notify(message, severity=Severity.ERROR.value)
 
@@ -665,7 +778,7 @@ class ADTUI(App):
             
             self.current_selected_dn = new_dn
             if self.current_selected_label:
-                self.details.update_content(self.current_selected_label, new_dn, self.conn)
+                self.details.update_content(self.current_selected_label, new_dn, self.connection_manager)
             self.action_refresh_ou()
         else:
             self.notify(message, severity=Severity.ERROR.value)

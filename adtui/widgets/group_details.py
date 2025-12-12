@@ -7,16 +7,16 @@ class GroupDetailsPane(Static):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.group_dn = None
-        self.conn = None
+        self.connection_manager = None
         self.entry = None
         self.members = []
         self.member_of = []
 
-    def update_group_details(self, group_dn, conn):
+    def update_group_details(self, group_dn, connection_manager):
         """Load and display group details."""
         print(f"update_group_details called with DN: {group_dn}")
         self.group_dn = group_dn
-        self.conn = conn
+        self.connection_manager = connection_manager
         self.load_group_details()
         print(f"load_group_details completed. Entry: {self.entry is not None}")
 
@@ -24,15 +24,19 @@ class GroupDetailsPane(Static):
         """Fetch group members and memberOf from LDAP."""
         print(f"load_group_details: Searching for {self.group_dn}")
         try:
-            self.conn.search(
-                self.group_dn,
-                '(objectClass=*)',
-                search_scope='BASE',
-                attributes=['cn', 'member', 'memberOf', 'description', 'groupType']
-            )
-            print(f"Search completed. Entries found: {len(self.conn.entries)}")
-            if self.conn.entries:
-                self.entry = self.conn.entries[0]
+            def search_group_op(conn):
+                conn.search(
+                    self.group_dn,
+                    '(objectClass=*)',
+                    search_scope='BASE',
+                    attributes=['cn', 'member', 'memberOf', 'description', 'groupType']
+                )
+                return conn.entries
+            
+            entries = self.connection_manager.execute_with_retry(search_group_op)
+            print(f"Search completed. Entries found: {len(entries)}")
+            if entries:
+                self.entry = entries[0]
                 
                 # Extract members (just the CN)
                 if hasattr(self.entry, 'member') and self.entry.member:
@@ -128,29 +132,40 @@ DN: {self.group_dn}
     def add_member(self, member_dn):
         """Add a member to the group."""
         try:
-            self.conn.modify(self.group_dn, {'member': [(MODIFY_ADD, [member_dn])]})
-            if self.conn.result['result'] == 0:
+            def add_member_op(conn):
+                conn.modify(self.group_dn, {'member': [(MODIFY_ADD, [member_dn])]})
+                return conn.result
+            
+            result = self.connection_manager.execute_with_retry(add_member_op)
+            if result['result'] == 0:
                 print("Successfully added member")
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to add member: {self.conn.result['message']}")
+                print(f"Failed to add member: {result['message']}")
                 return False
         except Exception as e:
             print(f"Error adding member: {e}")
             return False
 
     def remove_member(self, member_dn):
-        """Remove a member from the group."""
+        """Remove a member from group."""
         try:
-            self.conn.modify(self.group_dn, {'member': [(MODIFY_DELETE, [member_dn])]})
-            if self.conn.result['result'] == 0:
+            def remove_member_op(conn):
+                conn.modify(self.group_dn, {'member': [(MODIFY_DELETE, [member_dn])]})
+                return conn.result
+            
+            result = self.connection_manager.execute_with_retry(remove_member_op)
+            if result['result'] == 0:
                 print("Successfully removed member")
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to remove member: {self.conn.result['message']}")
+                print(f"Failed to remove member: {result['message']}")
                 return False
+        except Exception as e:
+            print(f"Error removing member: {e}")
+            return False
         except Exception as e:
             print(f"Error removing member: {e}")
             return False
@@ -158,13 +173,17 @@ DN: {self.group_dn}
     def join_group(self, parent_group_dn):
         """Add this group to another group."""
         try:
-            self.conn.modify(parent_group_dn, {'member': [(MODIFY_ADD, [self.group_dn])]})
-            if self.conn.result['result'] == 0:
+            def join_group_op(conn):
+                conn.modify(parent_group_dn, {'member': [(MODIFY_ADD, [self.group_dn])]})
+                return conn.result
+            
+            result = self.connection_manager.execute_with_retry(join_group_op)
+            if result['result'] == 0:
                 print("Successfully joined group")
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to join group: {self.conn.result['message']}")
+                print(f"Failed to join group: {result['message']}")
                 return False
         except Exception as e:
             print(f"Error joining group: {e}")
@@ -173,13 +192,17 @@ DN: {self.group_dn}
     def leave_group(self, parent_group_dn):
         """Remove this group from another group."""
         try:
-            self.conn.modify(parent_group_dn, {'member': [(MODIFY_DELETE, [self.group_dn])]})
-            if self.conn.result['result'] == 0:
+            def leave_group_op(conn):
+                conn.modify(parent_group_dn, {'member': [(MODIFY_DELETE, [self.group_dn])]})
+                return conn.result
+            
+            result = self.connection_manager.execute_with_retry(leave_group_op)
+            if result['result'] == 0:
                 print("Successfully left group")
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to leave group: {self.conn.result['message']}")
+                print(f"Failed to leave group: {result['message']}")
                 return False
         except Exception as e:
             print(f"Error leaving group: {e}")

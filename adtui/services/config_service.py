@@ -8,11 +8,17 @@ from typing import Dict, List, Optional, Tuple
 class ADConfig:
     """Represents a single AD configuration."""
     
-    def __init__(self, domain: str, server: str, base_dn: str, use_ssl: bool = False):
+    def __init__(self, domain: str, server: str, base_dn: str, use_ssl: bool = False,
+                 max_retries: int = 5, initial_retry_delay: float = 1.0,
+                 max_retry_delay: float = 60.0, health_check_interval: float = 30.0):
         self.domain = domain
         self.server = server
         self.base_dn = base_dn
         self.use_ssl = use_ssl
+        self.max_retries = max_retries
+        self.initial_retry_delay = initial_retry_delay
+        self.max_retry_delay = max_retry_delay
+        self.health_check_interval = health_check_interval
     
     def __str__(self) -> str:
         return f"{self.domain} ({self.server})"
@@ -58,7 +64,11 @@ class ConfigService:
                     domain=domain,
                     server=ad_config['server'],
                     base_dn=ad_config['base_dn'],
-                    use_ssl=ad_config.getboolean('use_ssl', fallback=False)
+                    use_ssl=ad_config.getboolean('use_ssl', fallback=False),
+                    max_retries=ad_config.getint('max_retries', fallback=5),
+                    initial_retry_delay=ad_config.getfloat('initial_retry_delay', fallback=1.0),
+                    max_retry_delay=ad_config.getfloat('max_retry_delay', fallback=60.0),
+                    health_check_interval=ad_config.getfloat('health_check_interval', fallback=30.0)
                 )
     
     def _load_legacy_config(self) -> None:
@@ -70,7 +80,11 @@ class ConfigService:
                 domain=domain,
                 server=ldap_config['server'],
                 base_dn=ldap_config['base_dn'],
-                use_ssl=ldap_config.getboolean('use_ssl', fallback=False)
+                use_ssl=ldap_config.getboolean('use_ssl', fallback=False),
+                max_retries=ldap_config.getint('max_retries', fallback=5),
+                initial_retry_delay=ldap_config.getfloat('initial_retry_delay', fallback=1.0),
+                max_retry_delay=ldap_config.getfloat('max_retry_delay', fallback=60.0),
+                health_check_interval=ldap_config.getfloat('health_check_interval', fallback=30.0)
             )
     
     def get_available_domains(self) -> List[str]:

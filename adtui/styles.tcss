@@ -2,6 +2,15 @@ Screen {
     layout: vertical;
 }
 
+#connection-status {
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: heavy $background 80%;
+    text-align: center;
+    content-align: center middle;
+}
+
 Horizontal {
     layout: horizontal;
     height: 1fr;

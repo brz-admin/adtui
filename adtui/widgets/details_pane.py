@@ -26,39 +26,39 @@ class DetailsPane(Static):
         super().__init__(*args, **kwargs)
         self.can_focus = True
         self.current_dn = None
-        self.current_conn = None
+        self.current_connection_manager = None
         self.current_type = None
         self.current_label = None
         self.user_details = None
         self.group_details = None
 
-    def update_content(self, item_label, dn=None, conn=None):
+    def update_content(self, item_label, dn=None, connection_manager=None):
         """Update the details pane based on the selected object type."""
         if not item_label:
             self.update("Select an item to view details.")
             return
 
-        if not dn or not conn:
+        if not dn or not connection_manager:
             self.update(f"Details for: {item_label}\n\n[Select an object to view details]")
             return
         
         self.current_dn = dn
-        self.current_conn = conn
+        self.current_connection_manager = connection_manager
         self.current_label = item_label
         
         # Determine object type and display appropriate details
         if "👥" in item_label:  # Group
             self.current_type = "group"
-            self._show_group_details(dn, conn)
+            self._show_group_details(dn, connection_manager)
         elif "👤" in item_label:  # User
             self.current_type = "user"
-            self._show_user_details(dn, conn)
+            self._show_user_details(dn, connection_manager)
         elif "💻" in item_label:  # Computer
             self.current_type = "computer"
-            self._show_computer_details(item_label, dn, conn)
+            self._show_computer_details(item_label, dn, connection_manager)
         elif "📁" in item_label:  # OU (Organizational Unit)
             self.current_type = "ou"
-            self._show_ou_details(item_label, dn, conn)
+            self._show_ou_details(item_label, dn, connection_manager)
         else:
             self.current_type = None
             self.update(f"Details for: {item_label}\n\n[Unsupported object type]")
@@ -72,7 +72,7 @@ class DetailsPane(Static):
         
         if self.current_type == "user":
             from ui.dialogs import SetPasswordDialog
-            self.app.push_screen(SetPasswordDialog(self.current_dn, self.current_conn))
+            self.app.push_screen(SetPasswordDialog(self.current_dn, self.current_connection_manager))
         else:
             self.app.notify("Password setting only available for users", severity="warning")
     
@@ -84,10 +84,10 @@ class DetailsPane(Static):
         
         if self.current_type == "user":
             from ui.dialogs import ManageGroupsDialog
-            self.app.push_screen(ManageGroupsDialog(self.current_dn, self.current_conn, self.user_details))
+            self.app.push_screen(ManageGroupsDialog(self.current_dn, self.current_connection_manager, self.user_details, self.app.base_dn))
         elif self.current_type == "group":
             from ui.dialogs import ManageGroupMembersDialog
-            self.app.push_screen(ManageGroupMembersDialog(self.current_dn, self.current_conn, self.group_details))
+            self.app.push_screen(ManageGroupMembersDialog(self.current_dn, self.current_connection_manager, self.group_details))
         else:
             self.app.notify("Group management not supported for this object type", severity="warning")
     
@@ -98,27 +98,38 @@ class DetailsPane(Static):
             return
         
         from ui.dialogs import EditAttributesDialog
-        self.app.push_screen(EditAttributesDialog(self.current_dn, self.current_conn))
+        self.app.push_screen(EditAttributesDialog(self.current_dn, self.current_connection_manager))
 
-    def _show_user_details(self, dn, conn):
+    def _show_user_details(self, dn, connection_manager):
         """Display user details with tabs."""
         try:
+            print(f"DEBUG: _show_user_details called with DN: {dn}")
+            print(f"DEBUG: connection_manager: {connection_manager}")
+            print(f"DEBUG: connection_manager type: {type(connection_manager)}")
+            if hasattr(connection_manager, 'get_state'):
+                state = connection_manager.get_state()
+                print(f"DEBUG: connection_manager state: {state}")
+            
             self.user_details = UserDetailsPane()
-            self.user_details.update_user_details(dn, conn)
+            self.user_details.update_user_details(dn, connection_manager)
+            
+            print(f"DEBUG: After update_user_details, entry exists: {self.user_details.entry is not None}")
             
             # Get the content
             content = self.user_details._build_content()
+            print(f"DEBUG: Content length: {len(content)}")
             self.update(content)
         except Exception as e:
+            print(f"DEBUG: Exception in _show_user_details: {e}")
             self.update(f"[bold cyan]USER DETAILS[/bold cyan]\n\n[red]Error loading user details: {e}[/red]")
             import traceback
             traceback.print_exc()
 
-    def _show_group_details(self, dn, conn):
+    def _show_group_details(self, dn, connection_manager):
         """Display group details."""
         try:
             self.group_details = GroupDetailsPane()
-            self.group_details.update_group_details(dn, conn)
+            self.group_details.update_group_details(dn, connection_manager)
             
             content = self.group_details._build_content()
             self.update(content)
@@ -127,12 +138,16 @@ class DetailsPane(Static):
             import traceback
             traceback.print_exc()
 
-    def _show_computer_details(self, label, dn, conn):
+    def _show_computer_details(self, label, dn, connection_manager):
         """Display basic computer details."""
         try:
-            conn.search(dn, '(objectClass=*)', attributes=['*'])
-            if conn.entries:
-                entry = conn.entries[0]
+            def search_computer_op(conn):
+                conn.search(dn, '(objectClass=*)', attributes=['*'])
+                return conn.entries
+            
+            entries = connection_manager.execute_with_retry(search_computer_op)
+            if entries:
+                entry = entries[0]
                 
                 cn = str(entry.cn.value) if hasattr(entry, 'cn') else "N/A"
                 os_name = str(entry.operatingSystem.value) if hasattr(entry, 'operatingSystem') else "N/A"
@@ -156,12 +171,16 @@ DN: {dn}
         except Exception as e:
             self.update(f"Details for: {label}\n\n[red]Error: {e}[/red]")
 
-    def _show_ou_details(self, label, dn, conn):
+    def _show_ou_details(self, label, dn, connection_manager):
         """Display OU (Organizational Unit) details."""
         try:
-            conn.search(dn, '(objectClass=*)', search_scope='BASE', attributes=['*'])
-            if conn.entries:
-                entry = conn.entries[0]
+            def search_ou_op(conn):
+                conn.search(dn, '(objectClass=*)', search_scope='BASE', attributes=['*'])
+                return conn.entries
+            
+            entries = connection_manager.execute_with_retry(search_ou_op)
+            if entries:
+                entry = entries[0]
                 
                 ou_name = str(entry.ou.value) if hasattr(entry, 'ou') else "N/A"
                 description = str(entry.description.value) if hasattr(entry, 'description') else "N/A"
@@ -169,8 +188,11 @@ DN: {dn}
                 when_changed = str(entry.whenChanged.value) if hasattr(entry, 'whenChanged') else "N/A"
                 
                 # Count child objects
-                conn.search(dn, '(objectClass=*)', search_scope='LEVEL', attributes=['objectClass'])
-                child_count = len(conn.entries)
+                def count_children_op(conn):
+                    conn.search(dn, '(objectClass=*)', search_scope='LEVEL', attributes=['objectClass'])
+                    return len(conn.entries)
+                
+                child_count = connection_manager.execute_with_retry(count_children_op)
                 
                 content = f"""[bold cyan]Organizational Unit Details[/bold cyan]
 
@@ -198,10 +220,10 @@ Last Modified: {when_changed}
         """Refresh the current details view."""
         if self.current_type == "user" and self.user_details:
             self.user_details.load_user_details()
-            self._show_user_details(self.current_dn, self.current_conn)
+            self._show_user_details(self.current_dn, self.current_connection_manager)
         elif self.current_type == "group" and self.group_details:
             self.group_details.load_group_details()
-            self._show_group_details(self.current_dn, self.current_conn)
+            self._show_group_details(self.current_dn, self.current_connection_manager)
         elif self.current_type == "ou":
-            self._show_ou_details(self.current_selected_label, self.current_dn, self.current_conn)
+            self._show_ou_details(self.current_selected_label, self.current_dn, self.current_connection_manager)
 

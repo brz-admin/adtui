@@ -9,22 +9,32 @@ import os
 # Add parent directory to path to import constants
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from constants import ObjectIcon, ObjectType, SearchScope, LDAPControl
+from .connection_manager import ConnectionManager
 
 
 class LDAPService:
     """Handles all LDAP/Active Directory operations."""
     
-    def __init__(self, connection: Connection, base_dn: str):
+    def __init__(self, connection_manager: ConnectionManager, base_dn: str):
         """Initialize LDAP service.
         
         Args:
-            connection: Active LDAP connection
+            connection_manager: Connection manager instance
             base_dn: Base Distinguished Name for the domain
         """
-        self.conn = connection
+        self.connection_manager = connection_manager
         self.base_dn = base_dn
         # Extract domain from base_dn for UPN generation
         self.domain = base_dn.replace('DC=', '').replace(',', '.')
+    
+    @property
+    def conn(self) -> Optional[Connection]:
+        """Get the current LDAP connection.
+        
+        Returns:
+            Current LDAP connection or None if not connected
+        """
+        return self.connection_manager.get_connection()
     
     def search_objects(self, query: str, object_types: Optional[List[str]] = None) -> List[Dict]:
         """Search for AD objects by cn or sAMAccountName.
@@ -48,29 +58,32 @@ class LDAPService:
         ldap_filter = f'(&(|(cn=*{query}*)(sAMAccountName=*{query}*)){obj_filter})'
         
         try:
-            self.conn.search(
-                self.base_dn,
-                ldap_filter,
-                attributes=['cn', 'objectClass', 'sAMAccountName'],
-                size_limit=1000
-            )
-            
-            results = []
-            for entry in self.conn.entries:
-                cn = str(entry['cn']) if 'cn' in entry else "Unknown"
-                obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+            def search_op(conn: Connection):
+                conn.search(
+                    self.base_dn,
+                    ldap_filter,
+                    attributes=['cn', 'objectClass', 'sAMAccountName'],
+                    size_limit=1000
+                )
                 
-                icon = self._get_object_icon(obj_classes)
-                label = f"{icon} {cn}"
+                results = []
+                for entry in conn.entries:
+                    cn = str(entry['cn']) if 'cn' in entry else "Unknown"
+                    obj_classes = [str(cls).lower() for cls in entry['objectClass']]
+                    
+                    icon = self._get_object_icon(obj_classes)
+                    label = f"{icon} {cn}"
+                    
+                    results.append({
+                        'label': label,
+                        'dn': entry.entry_dn,
+                        'cn': cn,
+                        'object_classes': obj_classes
+                    })
                 
-                results.append({
-                    'label': label,
-                    'dn': entry.entry_dn,
-                    'cn': cn,
-                    'object_classes': obj_classes
-                })
+                return results
             
-            return results
+            return self.connection_manager.execute_with_retry(search_op)
         except Exception as e:
             raise Exception(f"Search failed: {e}")
     
@@ -86,23 +99,26 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            ou_dn = f"ou={ou_name},{parent_dn}"
+            def create_ou_op(conn: Connection):
+                ou_dn = f"ou={ou_name},{parent_dn}"
+                
+                attributes = {
+                    'objectClass': ['top', 'organizationalUnit'],
+                    'ou': ou_name
+                }
+                
+                if description:
+                    attributes['description'] = description
+                
+                result = conn.add(ou_dn, attributes=attributes)
+                
+                if result:
+                    return True, f"Successfully created OU: {ou_name}"
+                else:
+                    error_msg = conn.result.get('message', 'Unknown error')
+                    return False, f"Failed to create OU: {error_msg}"
             
-            attributes = {
-                'objectClass': ['top', 'organizationalUnit'],
-                'ou': ou_name
-            }
-            
-            if description:
-                attributes['description'] = description
-            
-            result = self.conn.add(ou_dn, attributes=attributes)
-            
-            if result:
-                return True, f"Successfully created OU: {ou_name}"
-            else:
-                error_msg = self.conn.result.get('message', 'Unknown error')
-                return False, f"Failed to create OU: {error_msg}"
+            return self.connection_manager.execute_with_retry(create_ou_op)
         except Exception as e:
             return False, f"Error creating OU: {e}"
     
@@ -116,13 +132,16 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            result = self.conn.delete(dn)
+            def delete_op(conn: Connection):
+                result = conn.delete(dn)
+                
+                if result:
+                    return True, "Successfully deleted object. Use :recycle to restore if needed."
+                else:
+                    error_msg = conn.result.get('message', 'Unknown error')
+                    return False, f"Failed to delete: {error_msg}"
             
-            if result:
-                return True, "Successfully deleted object. Use :recycle to restore if needed."
-            else:
-                error_msg = self.conn.result.get('message', 'Unknown error')
-                return False, f"Failed to delete: {error_msg}"
+            return self.connection_manager.execute_with_retry(delete_op)
         except Exception as e:
             return False, f"Error deleting object: {e}"
     
@@ -137,18 +156,21 @@ class LDAPService:
             Tuple of (success: bool, message: str, new_dn: Optional[str])
         """
         try:
-            # Extract the RDN
-            rdn = dn.split(',')[0]
+            def move_op(conn: Connection):
+                # Extract the RDN
+                rdn = dn.split(',')[0]
+                
+                # Perform the move
+                result = conn.modify_dn(dn, rdn, new_superior=target_ou)
+                
+                if result:
+                    new_dn = f"{rdn},{target_ou}"
+                    return True, f"Successfully moved object to {target_ou}", new_dn
+                else:
+                    error_msg = conn.result.get('message', 'Unknown error')
+                    return False, f"Failed to move: {error_msg}", None
             
-            # Perform the move
-            result = self.conn.modify_dn(dn, rdn, new_superior=target_ou)
-            
-            if result:
-                new_dn = f"{rdn},{target_ou}"
-                return True, f"Successfully moved object to {target_ou}", new_dn
-            else:
-                error_msg = self.conn.result.get('message', 'Unknown error')
-                return False, f"Failed to move: {error_msg}", None
+            return self.connection_manager.execute_with_retry(move_op)
         except Exception as e:
             return False, f"Error moving object: {e}", None
     
@@ -162,13 +184,16 @@ class LDAPService:
             True if OU exists, False otherwise
         """
         try:
-            self.conn.search(
-                ou_dn,
-                '(objectClass=organizationalUnit)',
-                search_scope='BASE',
-                attributes=['ou']
-            )
-            return len(self.conn.entries) > 0
+            def validate_op(conn: Connection):
+                conn.search(
+                    ou_dn,
+                    '(objectClass=organizationalUnit)',
+                    search_scope='BASE',
+                    attributes=['ou']
+                )
+                return len(conn.entries) > 0
+            
+            return self.connection_manager.execute_with_retry(validate_op)
         except:
             return False
     
@@ -184,25 +209,28 @@ class LDAPService:
             List of OU dictionaries
         """
         try:
-            self.conn.search(
-                base_dn,
-                '(objectClass=organizationalUnit)',
-                search_scope='LEVEL',
-                attributes=['ou'],
-                size_limit=limit
-            )
+            def search_ous_op(conn: Connection):
+                conn.search(
+                    base_dn,
+                    '(objectClass=organizationalUnit)',
+                    search_scope='LEVEL',
+                    attributes=['ou'],
+                    size_limit=limit
+                )
+                
+                ous = []
+                for entry in conn.entries:
+                    ou_name = str(entry.ou.value) if hasattr(entry, 'ou') else None
+                    if ou_name:
+                        if not prefix or ou_name.lower().startswith(prefix.lower()):
+                            ous.append({
+                                'name': ou_name,
+                                'dn': entry.entry_dn
+                            })
+                
+                return ous
             
-            ous = []
-            for entry in self.conn.entries:
-                ou_name = str(entry.ou.value) if hasattr(entry, 'ou') else None
-                if ou_name:
-                    if not prefix or ou_name.lower().startswith(prefix.lower()):
-                        ous.append({
-                            'name': ou_name,
-                            'dn': entry.entry_dn
-                        })
-            
-            return ous
+            return self.connection_manager.execute_with_retry(search_ous_op)
         except Exception as e:
             return []
     
@@ -213,31 +241,34 @@ class LDAPService:
             List of deleted object dictionaries
         """
         try:
-            deleted_objects_dn = f"CN=Deleted Objects,{self.base_dn}"
-            
-            self.conn.search(
-                deleted_objects_dn,
-                '(isDeleted=TRUE)',
-                search_scope='SUBTREE',
-                attributes=['cn', 'objectClass', 'whenChanged', 'isDeleted'],
-                controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)]
-            )
-            
-            results = []
-            for entry in self.conn.entries:
-                cn = str(entry.cn.value) if hasattr(entry, 'cn') else "Unknown"
-                obj_classes = [str(cls).lower() for cls in entry.objectClass] if hasattr(entry, 'objectClass') else []
-                when_deleted = str(entry.whenChanged.value) if hasattr(entry, 'whenChanged') else "Unknown"
+            def get_deleted_op(conn: Connection):
+                deleted_objects_dn = f"CN=Deleted Objects,{self.base_dn}"
                 
-                icon = self._get_object_icon(obj_classes)
+                conn.search(
+                    deleted_objects_dn,
+                    '(isDeleted=TRUE)',
+                    search_scope='SUBTREE',
+                    attributes=['cn', 'objectClass', 'whenChanged', 'isDeleted'],
+                    controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)]
+                )
                 
-                results.append({
-                    'label': f"{icon} [Deleted] {cn} ({when_deleted})",
-                    'dn': entry.entry_dn,
-                    'cn': cn
-                })
+                results = []
+                for entry in conn.entries:
+                    cn = str(entry.cn.value) if hasattr(entry, 'cn') else "Unknown"
+                    obj_classes = [str(cls).lower() for cls in entry.objectClass] if hasattr(entry, 'objectClass') else []
+                    when_deleted = str(entry.whenChanged.value) if hasattr(entry, 'whenChanged') else "Unknown"
+                    
+                    icon = self._get_object_icon(obj_classes)
+                    
+                    results.append({
+                        'label': f"{icon} [Deleted] {cn} ({when_deleted})",
+                        'dn': entry.entry_dn,
+                        'cn': cn
+                    })
+                
+                return results
             
-            return results
+            return self.connection_manager.execute_with_retry(get_deleted_op)
         except Exception as e:
             raise Exception(f"Error accessing Recycle Bin: {e}. Ensure AD Recycle Bin is enabled.")
     
@@ -251,27 +282,30 @@ class LDAPService:
             Dictionary with object info or None
         """
         try:
-            deleted_objects_dn = f"CN=Deleted Objects,{self.base_dn}"
-            
-            self.conn.search(
-                deleted_objects_dn,
-                f'(&(isDeleted=TRUE)(cn={cn}*))',
-                search_scope='SUBTREE',
-                attributes=['*'],
-                controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)]
-            )
-            
-            if self.conn.entries:
-                if len(self.conn.entries) > 1:
-                    return {'error': 'multiple', 'count': len(self.conn.entries)}
+            def search_deleted_op(conn: Connection):
+                deleted_objects_dn = f"CN=Deleted Objects,{self.base_dn}"
                 
-                entry = self.conn.entries[0]
-                return {
-                    'dn': entry.entry_dn,
-                    'cn': cn
-                }
+                conn.search(
+                    deleted_objects_dn,
+                    f'(&(isDeleted=TRUE)(cn={cn}*))',
+                    search_scope='SUBTREE',
+                    attributes=['*'],
+                    controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)]
+                )
+                
+                if conn.entries:
+                    if len(conn.entries) > 1:
+                        return {'error': 'multiple', 'count': len(conn.entries)}
+                    
+                    entry = conn.entries[0]
+                    return {
+                        'dn': entry.entry_dn,
+                        'cn': cn
+                    }
+                
+                return None
             
-            return None
+            return self.connection_manager.execute_with_retry(search_deleted_op)
         except Exception as e:
             raise Exception(f"Error searching for deleted object: {e}")
     
@@ -285,15 +319,18 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            result = self.conn.modify(deleted_dn, {
-                'isDeleted': [(MODIFY_DELETE, [])],
-                'distinguishedName': [(MODIFY_REPLACE, [deleted_dn.replace('\\0ADEL:', '')])]
-            })
+            def restore_op(conn: Connection):
+                result = conn.modify(deleted_dn, {
+                    'isDeleted': [(MODIFY_DELETE, [])],
+                    'distinguishedName': [(MODIFY_REPLACE, [deleted_dn.replace('\\0ADEL:', '')])]
+                })
+                
+                if result:
+                    return True, "Successfully restored object"
+                else:
+                    return False, "Restore failed. Use PowerShell: Restore-ADObject cmdlet for complex restores."
             
-            if result:
-                return True, "Successfully restored object"
-            else:
-                return False, "Restore failed. Use PowerShell: Restore-ADObject cmdlet for complex restores."
+            return self.connection_manager.execute_with_retry(restore_op)
         except Exception as e:
             return False, f"Error restoring object: {e}. Use PowerShell Restore-ADObject cmdlet."
     
@@ -309,11 +346,14 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            self.conn.modify(dn, {attribute: [(MODIFY_REPLACE, [value])]})
-            if self.conn.result['result'] == 0:
-                return True, f"Successfully updated {attribute}"
-            else:
-                return False, f"Failed to update {attribute}: {self.conn.result['message']}"
+            def modify_op(conn: Connection):
+                conn.modify(dn, {attribute: [(MODIFY_REPLACE, [value])]})
+                if conn.result['result'] == 0:
+                    return True, f"Successfully updated {attribute}"
+                else:
+                    return False, f"Failed to update {attribute}: {conn.result['message']}"
+            
+            return self.connection_manager.execute_with_retry(modify_op)
         except Exception as e:
             return False, f"Error updating {attribute}: {e}"
     
@@ -328,11 +368,14 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            self.conn.modify(group_dn, {'member': [(MODIFY_ADD, [user_dn])]})
-            if self.conn.result['result'] == 0:
-                return True, "Successfully joined group"
-            else:
-                return False, f"Failed to join group: {self.conn.result['message']}"
+            def add_group_op(conn: Connection):
+                conn.modify(group_dn, {'member': [(MODIFY_ADD, [user_dn])]})
+                if conn.result['result'] == 0:
+                    return True, "Successfully joined group"
+                else:
+                    return False, f"Failed to join group: {conn.result['message']}"
+            
+            return self.connection_manager.execute_with_retry(add_group_op)
         except Exception as e:
             return False, f"Error joining group: {e}"
     
@@ -347,11 +390,14 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            self.conn.modify(group_dn, {'member': [(MODIFY_DELETE, [user_dn])]})
-            if self.conn.result['result'] == 0:
-                return True, "Successfully left group"
-            else:
-                return False, f"Failed to leave group: {self.conn.result['message']}"
+            def remove_group_op(conn: Connection):
+                conn.modify(group_dn, {'member': [(MODIFY_DELETE, [user_dn])]})
+                if conn.result['result'] == 0:
+                    return True, "Successfully left group"
+                else:
+                    return False, f"Failed to leave group: {conn.result['message']}"
+            
+            return self.connection_manager.execute_with_retry(remove_group_op)
         except Exception as e:
             return False, f"Error leaving group: {e}"
     
@@ -385,41 +431,43 @@ class LDAPService:
             Tuple of (success: bool, message: str)
         """
         try:
-            # Get current lockoutTime to check if account is actually locked
-            self.conn.search(
-                user_dn,
-                '(objectClass=user)',
-                search_scope='BASE',
-                attributes=['lockoutTime', 'badPwdCount']
-            )
-            
-            if not self.conn.entries:
-                return False, "User not found"
+            def unlock_op(conn: Connection):
+                # Get current lockoutTime to check if account is actually locked
+                conn.search(
+                    user_dn,
+                    '(objectClass=user)',
+                    search_scope='BASE',
+                    attributes=['lockoutTime', 'badPwdCount']
+                )
                 
-            entry = self.conn.entries[0]
-            
-            # Check if account is actually locked
-            lockout_time = 0
-            if hasattr(entry, 'lockoutTime') and entry.lockoutTime.value:
-                lockout_time = int(entry.lockoutTime.value)
-            
-            # 0 means not locked
-            if lockout_time == 0:
-                return False, "Account is not currently locked"
-            
-            # Unlock by clearing lockoutTime and resetting badPwdCount
-            changes = {
-                'lockoutTime': [(MODIFY_REPLACE, ['0'])],
-                'badPwdCount': [(MODIFY_REPLACE, ['0'])]
-            }
-            
-            self.conn.modify(user_dn, changes)
-            
-            if self.conn.result['result'] == 0:
-                return True, "Successfully unlocked user account"
-            else:
-                return False, f"Failed to unlock account: {self.conn.result['message']}"
+                if not conn.entries:
+                    return False, "User not found"
+                    
+                entry = conn.entries[0]
                 
+                # Check if account is actually locked
+                lockout_time = 0
+                if hasattr(entry, 'lockoutTime') and entry.lockoutTime.value:
+                    lockout_time = int(entry.lockoutTime.value)
+                
+                # 0 means not locked
+                if lockout_time == 0:
+                    return False, "Account is not currently locked"
+                
+                # Unlock by clearing lockoutTime and resetting badPwdCount
+                changes = {
+                    'lockoutTime': [(MODIFY_REPLACE, ['0'])],
+                    'badPwdCount': [(MODIFY_REPLACE, ['0'])]
+                }
+                
+                conn.modify(user_dn, changes)
+                
+                if conn.result['result'] == 0:
+                    return True, "Successfully unlocked user account"
+                else:
+                    return False, f"Failed to unlock account: {conn.result['message']}"
+            
+            return self.connection_manager.execute_with_retry(unlock_op)
         except Exception as e:
             return False, f"Error unlocking account: {e}"
 
@@ -434,20 +482,22 @@ class LDAPService:
             Tuple of (available: bool, message: str)
         """
         try:
-            search_base = base_dn if base_dn else self.base_dn
-            self.conn.search(
-                search_base,
-                f'(sAMAccountName={samaccount})',
-                search_scope='SUBTREE',
-                attributes=['sAMAccountName', 'distinguishedName']
-            )
+            def check_sam_op(conn: Connection):
+                search_base = base_dn if base_dn else self.base_dn
+                conn.search(
+                    search_base,
+                    f'(sAMAccountName={samaccount})',
+                    search_scope='SUBTREE',
+                    attributes=['sAMAccountName', 'distinguishedName']
+                )
+                
+                if conn.entries:
+                    existing_dn = conn.entries[0].distinguishedName.value
+                    return False, f"sAMAccountName '{samaccount}' already exists: {existing_dn}"
+                
+                return True, "sAMAccountName is available"
             
-            if self.conn.entries:
-                existing_dn = self.conn.entries[0].distinguishedName.value
-                return False, f"sAMAccountName '{samaccount}' already exists: {existing_dn}"
-            
-            return True, "sAMAccountName is available"
-            
+            return self.connection_manager.execute_with_retry(check_sam_op)
         except Exception as e:
             return False, f"Error checking sAMAccountName availability: {e}"
 
@@ -573,18 +623,21 @@ class LDAPService:
                 except ValueError:
                     return False, "Invalid account expiry date format. Use YYYY-MM-DD", ""
             
-            # Create the user
-            result = self.conn.add(user_dn, attributes=attributes)
+            def create_user_op(conn: Connection):
+                # Create the user
+                result = conn.add(user_dn, attributes=attributes)
+                
+                if not result:
+                    error_msg = conn.result.get('message', 'Unknown error')
+                    return False, f"Failed to create user: {error_msg}", ""
+                
+                # If user must change password at next logon, set pwdLastSet to 0
+                if user_must_change_password:
+                    conn.modify(user_dn, {'pwdLastSet': [(MODIFY_REPLACE, ['0'])]})
+                
+                return True, f"Successfully created user: {full_name}", user_dn
             
-            if not result:
-                error_msg = self.conn.result.get('message', 'Unknown error')
-                return False, f"Failed to create user: {error_msg}", ""
-            
-            # If user must change password at next logon, set pwdLastSet to 0
-            if user_must_change_password:
-                self.conn.modify(user_dn, {'pwdLastSet': [(MODIFY_REPLACE, ['0'])]})
-            
-            return True, f"Successfully created user: {full_name}", user_dn
+            return self.connection_manager.execute_with_retry(create_user_op)
             
         except Exception as e:
             return False, f"Error creating user: {e}", ""
@@ -608,15 +661,20 @@ class LDAPService:
             Tuple of (success: bool, message: str, new_user_dn: str)
         """
         try:
-            # Get source user information
-            self.conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
+            def get_source_info(conn: Connection):
+                # Get source user information
+                conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
                           attributes=['givenName', 'sn', 'description', 'department', 
                                    'company', 'title', 'manager', 'userAccountControl'])
+                
+                if not conn.entries:
+                    return None
+                
+                return conn.entries[0]
             
-            if not self.conn.entries:
+            source_entry = self.connection_manager.execute_with_retry(get_source_info)
+            if not source_entry:
                 return False, "Source user not found", ""
-            
-            source_entry = self.conn.entries[0]
             
             # Extract source attributes
             first_name = str(source_entry.givenName.value) if hasattr(source_entry, 'givenName') else ""
@@ -647,16 +705,23 @@ class LDAPService:
             # Copy group memberships if requested
             if copy_groups:
                 try:
-                    # Get source user's groups
-                    self.conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
+                    def get_groups_op(conn: Connection):
+                        # Get source user's groups
+                        conn.search(source_dn, '(objectClass=user)', search_scope='BASE',
                                   attributes=['memberOf'])
+                        return conn.entries[0] if conn.entries else None
                     
-                    if hasattr(source_entry, 'memberOf'):
+                    groups_entry = self.connection_manager.execute_with_retry(get_groups_op)
+                    
+                    if groups_entry and hasattr(groups_entry, 'memberOf'):
                         groups_to_add = []
-                        for group_dn in source_entry.memberOf.values:
+                        for group_dn in groups_entry.memberOf.values:
                             # Try to add user to each group
                             try:
-                                result = self.conn.modify(group_dn, {'member': [(MODIFY_ADD, [new_user_dn])]})
+                                def add_to_group_op(conn: Connection):
+                                    return conn.modify(group_dn, {'member': [(MODIFY_ADD, [new_user_dn])]})
+                                
+                                result = self.connection_manager.execute_with_retry(add_to_group_op)
                                 if result:
                                     groups_to_add.append(group_dn)
                             except:
@@ -672,7 +737,11 @@ class LDAPService:
             if copy_manager and hasattr(source_entry, 'manager'):
                 try:
                     manager_dn = str(source_entry.manager.value)
-                    self.conn.modify(new_user_dn, {'manager': [(MODIFY_REPLACE, [manager_dn])]})
+                    
+                    def copy_manager_op(conn: Connection):
+                        return conn.modify(new_user_dn, {'manager': [(MODIFY_REPLACE, [manager_dn])]})
+                    
+                    self.connection_manager.execute_with_retry(copy_manager_op)
                     message += " Manager copied."
                 except Exception as e:
                     message += f" Warning: Could not copy manager: {e}"
