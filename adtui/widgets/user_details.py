@@ -23,24 +23,24 @@ class UserDetailsPane(Static):
 
     def update_user_details(self, user_dn, connection_manager):
         """Load and display user details."""
-        print(f"DEBUG: update_user_details called with DN: {user_dn}")
-        print(f"DEBUG: connection_manager type: {type(connection_manager)}")
-        print(f"DEBUG: connection_manager object: {connection_manager}")
+        
+        
+        
         
         self.user_dn = user_dn
         self.connection_manager = connection_manager
         self.load_error = None  # Clear any previous error
         self.load_user_details()
-        print(f"DEBUG: load_user_details completed. Entry: {self.entry is not None}")
+        
         
         if not self.entry:
             print("DEBUG: No entry found after load_user_details")
 
     def load_user_details(self):
         """Fetch user details from LDAP."""
-        print(f"DEBUG: load_user_details: Searching for {self.user_dn}")
-        print(f"DEBUG: connection_manager type: {type(self.connection_manager)}")
-        print(f"DEBUG: connection_manager has execute_with_retry: {hasattr(self.connection_manager, 'execute_with_retry')}")
+        
+        
+        
         
         try:
             def search_user_op(conn):
@@ -53,10 +53,10 @@ class UserDetailsPane(Static):
                 return conn.entries
             
             entries = self.connection_manager.execute_with_retry(search_user_op)
-            print(f"DEBUG: Search completed. Entries found: {len(entries)}")
+            
             if entries:
                 self.entry = entries[0]
-                print(f"DEBUG: Entry assigned: {self.entry}")
+                
                 
                 # Extract member of groups (just the CN)
                 if hasattr(self.entry, 'memberOf') and self.entry.memberOf:
@@ -83,14 +83,14 @@ class UserDetailsPane(Static):
                             for attr, values in self.entry.entry_attributes:
                                 self.raw_attributes[attr] = values
                     except Exception as e:
-                        print(f"DEBUG: Error converting entry_attributes: {e}")
+                        
                         self.raw_attributes = {}
             else:
                 print("DEBUG: No entries found in search results")
                 self.entry = None
         except Exception as e:
-            print(f"DEBUG: Error in load_user_details: {e}")
-            print(f"DEBUG: Exception type: {type(e)}")
+            
+            
             import traceback
             traceback.print_exc()
             
@@ -114,10 +114,10 @@ class UserDetailsPane(Static):
 
     def _build_content(self):
         """Build the content string for display."""
-        print(f"_build_content called. Entry exists: {self.entry is not None}")
+        
         if not self.entry:
             if hasattr(self, 'load_error') and self.load_error:
-                print(f"Load error: {self.load_error}")
+                
                 return f"[red]Error loading user details: {self.load_error}[/red]"
             else:
                 print("No entry found, returning 'No user data'")
@@ -173,9 +173,9 @@ class UserDetailsPane(Static):
                             
                             pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
                             filetime = None  # We don't need filetime conversion
-                            print(f"DEBUG: Successfully parsed pwdLastSet datetime: {pwd_last_set}")
+                            
                         except ValueError as ve:
-                            print(f"DEBUG: Failed to parse datetime string: {ve}")
+                            
                             # Fallback: try to convert to int if it's actually a numeric string
                             try:
                                 filetime = int(pwd_last_set_value)
@@ -217,7 +217,7 @@ class UserDetailsPane(Static):
                         now = datetime.now()
                     
                     days_until_expiry = (pwd_expires - now).days
-                    print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires}, now: {now})")
+                    
                     
                     if days_until_expiry < 0:
                         pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
@@ -232,7 +232,7 @@ class UserDetailsPane(Static):
                         pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
                 elif not pwd_last_set_dt and not password_never_expires:
                     # We have pwdLastSet but couldn't parse it properly
-                    print(f"DEBUG: Unable to calculate password expiry. pwdLastSet value: {getattr(self.entry.pwdLastSet, 'value', 'N/A')}")
+                    
                     pwd_expiry_info = "[yellow]Unable to calculate expiry[/yellow]"
                 elif not hasattr(self.entry, 'pwdLastSet') or not self.entry.pwdLastSet.value:
                     # No pwdLastSet attribute at all
@@ -242,9 +242,9 @@ class UserDetailsPane(Static):
             except Exception as e:
                 pwd_last_set_value = self.entry.pwdLastSet.value
                 pwd_last_set = str(pwd_last_set_value)
-                print(f"Exception in pwdLastSet processing: {e}")
-                print(f"Exception type: {type(e)}")
-                print(f"pwdLastSet value: {pwd_last_set_value} (type: {type(pwd_last_set_value)})")
+                
+                
+                
                 import traceback
                 traceback.print_exc()
                 
@@ -252,13 +252,13 @@ class UserDetailsPane(Static):
                 if isinstance(pwd_last_set_value, str) and pwd_last_set_value.isdigit():
                     try:
                         filetime = int(pwd_last_set_value)
-                        print(f"  → Retrying as FILETIME string: {filetime}")
+                        
                         
                         if filetime > 0:
                             # Convert FILETIME to datetime
                             pwd_last_set_dt = datetime(1601, 1, 1) + timedelta(microseconds=filetime / 10)
                             pwd_last_set = pwd_last_set_dt.strftime('%Y-%m-%d %H:%M:%S')
-                            print(f"  → Successfully converted FILETIME string to datetime: {pwd_last_set}")
+                            
                             
                             # Calculate password expiry
                             if not password_never_expires:
@@ -272,7 +272,7 @@ class UserDetailsPane(Static):
                                     now = datetime.now()
                                 
                                 days_until_expiry = (pwd_expires - now).days
-                                print(f"DEBUG: Password expires in {days_until_expiry} days (last set: {pwd_last_set_dt}, expires: {pwd_expires}, now: {now})")
+                                
                                 
                                 if days_until_expiry < 0:
                                     pwd_expiry_warning = f"[red bold]⚠ PASSWORD EXPIRED {abs(days_until_expiry)} days ago![/red bold]"
@@ -381,14 +381,14 @@ Password Last Set: {pwd_last_set}{' - ' + pwd_expiry_info if pwd_expiry_info and
         try:
             self.conn.modify(self.user_dn, {attribute: [(MODIFY_REPLACE, [value])]})
             if self.conn.result['result'] == 0:
-                print(f"Successfully updated {attribute}")
+                
                 self.load_user_details()
                 return True
             else:
-                print(f"Failed to update {attribute}: {self.conn.result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error updating {attribute}: {e}")
+            
             return False
 
     def add_to_group(self, group_dn):
@@ -400,10 +400,10 @@ Password Last Set: {pwd_last_set}{' - ' + pwd_expiry_info if pwd_expiry_info and
                 self.load_user_details()
                 return True
             else:
-                print(f"Failed to join group: {self.conn.result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error joining group: {e}")
+            
             return False
 
     def remove_from_group(self, group_dn):
@@ -415,10 +415,10 @@ Password Last Set: {pwd_last_set}{' - ' + pwd_expiry_info if pwd_expiry_info and
                 self.load_user_details()
                 return True
             else:
-                print(f"Failed to leave group: {self.conn.result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error leaving group: {e}")
+            
             return False
 
 
@@ -427,13 +427,13 @@ Password Last Set: {pwd_last_set}{' - ' + pwd_expiry_info if pwd_expiry_info and
         try:
             success, message = self._unlock_account_via_service()
             if success:
-                print(f"Account unlocked: {message}")
+                
                 self.load_user_details()  # Refresh the display
             else:
-                print(f"Failed to unlock: {message}")
+                
             return success
         except Exception as e:
-            print(f"Error unlocking account: {e}")
+            
             return False
 
     def _unlock_account_via_service(self) -> Tuple[bool, str]:

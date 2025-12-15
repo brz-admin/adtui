@@ -209,7 +209,7 @@ class EditUserDialog(ModalScreen):
                                     conn.modify(self.dn, {field: [(MODIFY_DELETE, [])]})
                                 except Exception as e:
                                     # Attribute might not exist or cannot be deleted, continue
-                                    print(f"Could not delete {field}: {e}")
+                                    
                 
                 if self.connection_manager:
                     self.connection_manager.execute_with_retry(update_user_op)
@@ -721,8 +721,8 @@ class SetPasswordDialog(ModalScreen):
                 pwd1 = pwd1_input.value
                 pwd2 = pwd2_input.value
                 
-                print(f"DEBUG: pwd1 length: {len(pwd1)}, pwd2 length: {len(pwd2)}")
-                print(f"DEBUG: pwd1 repr: {repr(pwd1)}, pwd2 repr: {repr(pwd2)}")
+                
+                
                 
                 if len(pwd1) == 0 or len(pwd2) == 0:
                     self.app.notify("Password cannot be empty", severity="warning")

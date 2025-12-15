@@ -112,15 +112,15 @@ class ConnectionManager:
         """Trigger authentication failure callback if set."""
         if self._auth_failure_callback:
             try:
-                logger.error("DEBUG: Triggering auth failure callback")
+                logger.error(": Triggering auth failure callback")
                 self._auth_failure_callback()
-                logger.error("DEBUG: Auth failure callback completed")
+                logger.error(": Auth failure callback completed")
             except Exception as e:
                 logger.error(f"Error in auth failure callback: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            logger.error("DEBUG: No auth failure callback set")
+            logger.error(": No auth failure callback set")
     
     def get_state(self) -> ConnectionState:
         """Get current connection state.

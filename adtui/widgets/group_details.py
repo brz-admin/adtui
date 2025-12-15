@@ -14,15 +14,15 @@ class GroupDetailsPane(Static):
 
     def update_group_details(self, group_dn, connection_manager):
         """Load and display group details."""
-        print(f"update_group_details called with DN: {group_dn}")
+        
         self.group_dn = group_dn
         self.connection_manager = connection_manager
         self.load_group_details()
-        print(f"load_group_details completed. Entry: {self.entry is not None}")
+        
 
     def load_group_details(self):
         """Fetch group members and memberOf from LDAP."""
-        print(f"load_group_details: Searching for {self.group_dn}")
+        
         try:
             def search_group_op(conn):
                 conn.search(
@@ -34,7 +34,7 @@ class GroupDetailsPane(Static):
                 return conn.entries
             
             entries = self.connection_manager.execute_with_retry(search_group_op)
-            print(f"Search completed. Entries found: {len(entries)}")
+            
             if entries:
                 self.entry = entries[0]
                 
@@ -62,7 +62,7 @@ class GroupDetailsPane(Static):
                 else:
                     self.member_of = []
         except Exception as e:
-            print(f"Error loading group details: {e}")
+            
             import traceback
             traceback.print_exc()
 
@@ -75,7 +75,7 @@ class GroupDetailsPane(Static):
 
     def _build_content(self):
         """Build the content string for display."""
-        print(f"_build_content called. Entry exists: {self.entry is not None}")
+        
         if not self.entry:
             print("No entry found, returning 'No group data'")
             return "No group data"
@@ -142,10 +142,10 @@ DN: {self.group_dn}
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to add member: {result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error adding member: {e}")
+            
             return False
 
     def remove_member(self, member_dn):
@@ -161,13 +161,13 @@ DN: {self.group_dn}
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to remove member: {result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error removing member: {e}")
+            
             return False
         except Exception as e:
-            print(f"Error removing member: {e}")
+            
             return False
 
     def join_group(self, parent_group_dn):
@@ -183,10 +183,10 @@ DN: {self.group_dn}
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to join group: {result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error joining group: {e}")
+            
             return False
 
     def leave_group(self, parent_group_dn):
@@ -202,9 +202,9 @@ DN: {self.group_dn}
                 self.load_group_details()
                 return True
             else:
-                print(f"Failed to leave group: {result['message']}")
+                
                 return False
         except Exception as e:
-            print(f"Error leaving group: {e}")
+            
             return False
 

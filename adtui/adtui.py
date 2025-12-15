@@ -64,7 +64,7 @@ def create_connection_manager(username: str, password: str, ad_config: ADConfig)
         
         return manager
     except Exception as e:
-        print(f"Failed to create connection manager: {e}")
+        
         raise
 
 
@@ -383,7 +383,7 @@ class ADTUI(App):
     def _on_authentication_failure(self):
         """Handle authentication failure - exit to restart login flow."""
         try:
-            print("DEBUG: _on_authentication_failure called")
+            print(": _on_authentication_failure called")
             self.notify("Authentication failed. Please check your credentials.", severity="error")
             
             # Clear current connection and services
@@ -402,11 +402,11 @@ class ADTUI(App):
                 self.details.update_content("No connection", None, None)
             
             # Exit main app to trigger login restart in main script
-            print("DEBUG: Exiting main app to restart login flow")
+            print(": Exiting main app to restart login flow")
             self.exit()
             
         except Exception as e:
-            print(f"Error in authentication failure handler: {e}")
+            
             import traceback
             traceback.print_exc()
     
@@ -1032,7 +1032,7 @@ def main():
     try:
         config_service = ConfigService()
     except Exception as e:
-        print(f"Failed to load configuration: {e}")
+        
         return
     
     # Validate configuration
@@ -1040,7 +1040,7 @@ def main():
     if not is_valid:
         print("Configuration errors:")
         for issue in issues:
-            print(f"  - {issue}")
+            
         return
     
     # Global variables to store login results
@@ -1133,7 +1133,7 @@ def main():
             app = ADTUI(username, password, ad_config)
             app.run()
         except Exception as e:
-            print(f"Failed to start application: {e}")
+            
     else:
         exit()
 

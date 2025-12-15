@@ -30,7 +30,7 @@ class ADTree(Tree):
             # Ensure tree root is expanded to show base DN node
             self.root.expand()
         except Exception as e:
-            print(f"Error building tree: {e}")
+            
             import traceback
             traceback.print_exc()
     
@@ -64,7 +64,7 @@ class ADTree(Tree):
                 return
 
         except Exception as e:
-            print(f"Error building children for {parent_dn}: {e}")
+            
             import traceback
             traceback.print_exc()
 
@@ -149,7 +149,7 @@ class ADTree(Tree):
                 return
 
         except Exception as e:
-            print(f"Error populating OU {ou_dn}: {e}")
+            
 
     def populate_ou_sync(self, parent_node, ou_dn):
         """Synchronously populate an OU for navigation purposes."""
@@ -181,7 +181,7 @@ class ADTree(Tree):
                     node.data = entry_dn
 
         except Exception as e:
-            print(f"Error populating from cache for {ou_dn}: {e}")
+            
 
     def _populate_ou_fresh(self, parent_node, ou_dn):
         """Populate an OU with fresh data (bypassing cache)."""
@@ -236,7 +236,7 @@ class ADTree(Tree):
                 return
 
         except Exception as e:
-            print(f"Error populating OU {ou_dn}: {e}")
+            
 
     def refresh_current_ou(self):
         """Refresh currently selected OU."""
@@ -277,7 +277,7 @@ class ADTree(Tree):
             # Expand the node to show refreshed content
             target_node.expand()
         else:
-            print(f"Could not find OU node for DN: {ou_dn}")
+            
     
     def _find_node_by_dn(self, node, target_dn: str):
         """Recursively find a tree node by its DN."""

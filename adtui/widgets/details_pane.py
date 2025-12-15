@@ -103,24 +103,24 @@ class DetailsPane(Static):
     def _show_user_details(self, dn, connection_manager):
         """Display user details with tabs."""
         try:
-            print(f"DEBUG: _show_user_details called with DN: {dn}")
-            print(f"DEBUG: connection_manager: {connection_manager}")
-            print(f"DEBUG: connection_manager type: {type(connection_manager)}")
+            
+            
+            
             if hasattr(connection_manager, 'get_state'):
                 state = connection_manager.get_state()
-                print(f"DEBUG: connection_manager state: {state}")
+                
             
             self.user_details = UserDetailsPane()
             self.user_details.update_user_details(dn, connection_manager)
             
-            print(f"DEBUG: After update_user_details, entry exists: {self.user_details.entry is not None}")
+            
             
             # Get the content
             content = self.user_details._build_content()
-            print(f"DEBUG: Content length: {len(content)}")
+            
             self.update(content)
         except Exception as e:
-            print(f"DEBUG: Exception in _show_user_details: {e}")
+            
             self.update(f"[bold cyan]USER DETAILS[/bold cyan]\n\n[red]Error loading user details: {e}[/red]")
             import traceback
             traceback.print_exc()

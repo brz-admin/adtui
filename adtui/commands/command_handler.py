@@ -54,8 +54,8 @@ class CommandHandler:
             # User management commands
             'unlock': self._handle_unlock,
             
-            # Debug commands
-            'debug-tree': self._handle_debug_tree,
+            #  commands
+            '-tree': self._handle__tree,
             'createuser': self._handle_create_user,
             'cu': self._handle_create_user,
             'copyuser': self._handle_copy_user,
@@ -422,8 +422,8 @@ Full LDAP DN also works:
         # Fallback to base DN
         return self.app.ldap_service.base_dn if self.app.ldap_service else self.app.base_dn
     
-    def _handle_debug_tree(self, args: str) -> None:
-        """Handle debug tree command - rebuild tree."""
+    def _handle__tree(self, args: str) -> None:
+        """Handle  tree command - rebuild tree."""
         try:
             self.app.notify("Rebuilding AD tree...", severity="information")
             
