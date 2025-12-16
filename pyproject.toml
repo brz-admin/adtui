@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adtui"
-version = "2.0.0"
+version = "2.1.0"
 description = "Active Directory Terminal User Interface"
 readme = "README.md"
 long_description = """
@@ -27,7 +27,7 @@ long_description_content_type = "text/markdown"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Brz", email = "brz@brznet.fr"}
 ]
 keywords = ["active-directory", "ldap", "tui", "terminal", "ad-management"]
 classifiers = [
@@ -56,6 +56,9 @@ dev = [
     "black>=23.0",
     "mypy>=1.0",
     "pylint>=2.15",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+    "pyinstaller>=5.0.0",
 ]
 
 [project.urls]
@@ -67,10 +70,10 @@ Repository = "https://git.brznet.fr/brz/adtui"
 adtui = "adtui:main"
 
 [tool.setuptools]
-packages = ["adtui", "adtui.services", "adtui.commands", "adtui.ui", "adtui.widgets"]
+packages = ["adtui"]
 
 [tool.setuptools.package-data]
-adtui = ["*.tcss", "*.ini.example", "*.md"]
+adtui = ["*.tcss", "*.ini.example"]
 
 [tool.black]
 line-length = 120

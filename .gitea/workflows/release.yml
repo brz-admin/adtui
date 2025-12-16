@@ -4,35 +4,36 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - '.gitignore'
+    tags:
+      - 'v*'
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build twine wheel
+          pip install build twine wheel pyinstaller
 
-      - name: Extract version from setup.py
+      - name: Extract version from pyproject.toml
         id: get_version
         run: |
-          VERSION=$(python -c "import re; content=open('setup.py').read(); print(re.search(r'version=\"(.+?)\"', content).group(1))")
+          VERSION=$(python -c "import tomllib; data=tomllib.load(open('pyproject.toml', 'rb')); print(data['project']['version'])")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
@@ -48,64 +49,53 @@ jobs:
             echo "Release $TAG does not exist, will create"
           fi
 
-      - name: Build Python package
+      - name: Build packages
         if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
         run: |
-          python -m build
+          python scripts/build.py --all
           ls -lah dist/
 
-      - name: Create changelog
+      - name: Create release notes
         if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
-        id: changelog
         run: |
           cat > RELEASE_NOTES.md << 'EOF'
           # ADTUI v${{ steps.get_version.outputs.VERSION }}
           
-          ## 🎉 Features
-          - Complete refactored architecture
-          - Service layer for clean separation of concerns
-          - Command handler pattern
-          - Path autocomplete for move operations
-          - Account and password expiry alerts
-          - Undo support for operations
-          - AD Recycle Bin integration
+          ## 🎉 Universal Installation
           
-          ## 📦 Installation
+          ### Method 1: One-Liner Installer (Recommended)
+          ```bash
+          curl -fsSL https://git.brznet.fr/brz/adtui/raw/branch/main/install.sh | sh
+          ```
           
-          ### Method 1: Install from wheel file
-          \`\`\`bash
+          ### Method 2: Python Package
+          ```bash
           pip install adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
-          \`\`\`
+          ```
           
-          ### Method 2: Install from source
-          \`\`\`bash
-          pip install adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz
-          \`\`\`
+          ### Method 3: Download Executable
+          Download `adtui` from the assets below and run:
+          ```bash
+          chmod +x adtui
+          ./adtui
+          ```
           
-          ### Method 3: Install directly from Gitea
-          \`\`\`bash
-          pip install git+https://your-gitea-instance.com/youruser/adtui.git@v${{ steps.get_version.outputs.VERSION }}
-          \`\`\`
+          ### Method 4: Docker
+          ```bash
+          docker run -it --rm adtui:${{ steps.get_version.outputs.VERSION }}
+          ```
           
-          ## 🚀 Quick Start
+          ## 📦 Configuration
           
-          1. Create configuration file:
-          \`\`\`bash
-          cp config.ini.example config.ini
-          \`\`\`
-          
+          After installation:
+          1. Copy configuration: `cp config.ini.example config.ini`
           2. Edit config.ini with your AD details
-          
-          3. Run the application:
-          \`\`\`bash
-          adtui
-          \`\`\`
+          3. Run: `adtui`
           
           ## 📋 Requirements
-          - Python 3.8+
+          - Python 3.8+ (for package installation)
           - Access to Active Directory
-          - ldap3>=2.9.1
-          - textual>=0.40.0
+          - Modern terminal with UTF-8 support
           
           ## 📚 Documentation
           See README.md and COMMANDS.md for full documentation.
@@ -116,7 +106,7 @@ jobs:
           - Enable SSL in production (use_ssl = true)
           EOF
           
-          echo "Created release notes"
+          echo "Release notes created"
 
       - name: Create Git tag
         if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
@@ -161,6 +151,17 @@ jobs:
           asset_name: adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz
           asset_content_type: application/gzip
 
+      - name: Upload Executable
+        if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/adtui
+          asset_name: adtui
+          asset_content_type: application/octet-stream
+
       - name: Upload Config Example
         if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
         uses: actions/upload-release-asset@v1
@@ -180,7 +181,8 @@ jobs:
           echo "📦 Assets uploaded:"
           echo "  - adtui-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl"
           echo "  - adtui-${{ steps.get_version.outputs.VERSION }}.tar.gz"
+          echo "  - adtui (executable)"
           echo "  - config.ini.example"
           echo ""
           echo "🔗 Users can install with:"
-          echo "  pip install <downloaded-wheel-file>"
+          echo "  curl -fsSL https://git.brznet.fr/brz/adtui/raw/branch/main/install.sh | sh"

@@ -40,19 +40,38 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 - **Status display**: Shows "Disabled: Yes/No" with color coding
 - **Confirmation dialogs**: Red for disable, green for enable operations
 
-## Installation
+## 🚀 Quick Install
 
-### From Source
-
+### Method 1: Universal One-Liner (Recommended)
 ```bash
-# Clone the repository
-git clone git@servgitea.domman.ad:ti2103/adtui.git
+curl -fsSL https://git.brznet.fr/brz/adtui/raw/branch/main/install.sh | sh
+```
+
+### Method 2: Python Package
+```bash
+pip install adtui
+```
+
+### Method 3: Download Executable (No Python Required)
+```bash
+# Linux/macOS
+curl -L https://git.brznet.fr/brz/adtui/releases/latest/download/adtui -o adtui
+chmod +x adtui
+./adtui
+
+# Windows
+# Download adtui.exe from releases
+```
+
+### Method 4: Docker
+```bash
+docker run -it --rm adtui:latest
+```
+
+### Method 5: From Source (Development)
+```bash
+git clone https://git.brznet.fr/brz/adtui.git
 cd adtui
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the package
 pip install -e .
 ```
 

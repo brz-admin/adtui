@@ -1,7 +1,6 @@
 # Include documentation
 include README.md
 include LICENSE
-include CHANGELOG.md
 include COMMANDS.md
 include FEATURES.md
 

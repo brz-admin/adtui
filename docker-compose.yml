@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  adtui:
+    build: .
+    image: adtui:latest
+    stdin_open: true
+    tty: true
+    container_name: adtui
+    environment:
+      - TERM=xterm-256color
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount configuration file
+      - ./config.ini:/home/adtui/config.ini:ro
+      # Mount user history file
+      - ./last_user.txt:/home/adtui/last_user.txt:rw
+      # Mount any custom SSL certificates if needed
+      - ./certs:/home/adtui/certs:ro
+    working_dir: /home/adtui
+    command: ["adtui"]
+    
+  # Alternative service for shell access
+  adtui-shell:
+    build: .
+    image: adtui:latest
+    stdin_open: true
+    tty: true
+    container_name: adtui-shell
+    environment:
+      - TERM=xterm-256color
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config.ini:/home/adtui/config.ini:ro
+      - ./last_user.txt:/home/adtui/last_user.txt:rw
+      - ./certs:/home/adtui/certs:ro
+    working_dir: /home/adtui
+    command: ["/bin/bash"]
+    profiles:
+      - shell

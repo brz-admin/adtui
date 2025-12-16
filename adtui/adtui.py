@@ -11,13 +11,13 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
 from textual.binding import Binding
 
-from adtree import ADTree
-from widgets.details_pane import DetailsPane
-from services import LDAPService, HistoryService, PathService
-from services.config_service import ConfigService, ADConfig
-from services.connection_manager import ConnectionManager, ConnectionState
-from commands import CommandHandler
-from ui.dialogs import (
+from .adtree import ADTree
+from .widgets.details_pane import DetailsPane
+from .services import LDAPService, HistoryService, PathService
+from .services.config_service import ConfigService, ADConfig
+from .services.connection_manager import ConnectionManager, ConnectionState
+from .commands import CommandHandler
+from .ui.dialogs import (
     ConfirmDeleteDialog,
     ConfirmMoveDialog,
     ConfirmRestoreDialog,
@@ -26,7 +26,7 @@ from ui.dialogs import (
     ADSelectionDialog,
     LoginDialog,
 )
-from constants import Severity, MESSAGES
+from .constants import Severity, MESSAGES
 
 # Configuration will be loaded after AD selection
 LAST_USER_FILE = "last_user.txt"
