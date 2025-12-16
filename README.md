@@ -44,6 +44,11 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ### Method 1: Universal One-Liner (Recommended)
 ```bash
+curl -fsSL https://git.brznet.fr/Brz/adtui/raw/branch/main/install.sh | sh
+```
+
+**Alternative URL (if above doesn't work due to network issues):**
+```bash
 curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
 ```
 
@@ -70,7 +75,7 @@ docker run -it --rm adtui:latest
 
 ### Method 5: From Source (Development)
 ```bash
-git clone https://servgitea.domman.ad/ti2103/adtui.git
+git clone https://git.brznet.fr/Brz/adtui.git
 cd adtui
 pip install -e .
 ```
@@ -387,11 +392,47 @@ MIT License - see LICENSE file for details
 - User/Group/Computer details
 - Move and delete operations
 
+## 🔧 Troubleshooting
+
+### Installation Issues
+
+**Error: `/usr/bin/python3: No module named pip`**
+```bash
+# Install pip first, then run installer
+curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3
+./install.sh
+```
+
+**Curl 404 errors with git.brznet.fr**
+```bash
+# Use alternative servgitea URL
+curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
+```
+
+**PATH not found after installation**
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+export PATH="$PATH:$HOME/.local/bin"
+source ~/.bashrc  # or source ~/.zshrc
+```
+
+### Configuration Issues
+
+**Credentials not accepted**
+- Verify AD server and domain in config.ini
+- Ensure user account has necessary permissions
+- Check network connectivity to domain controller
+
+**SSL connection issues**
+- Set `use_ssl = true` in config.ini
+- Verify SSL certificates on domain controller
+- Test with `openssl s_client -connect dc.domain.com:636`
+
 ## Support
 
 For issues, questions, or contributions:
 
-- Issues: https://git.brznet.fr/brz/adtui/issues
+- Issues: https://git.brznet.fr/Brz/adtui/issues
 
 ## Credits
 
