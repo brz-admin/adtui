@@ -2,13 +2,15 @@
 
 A powerful Terminal User Interface (TUI) for managing Active Directory, built with Python and Textual.
 
+**Current Version: 2.1.0**
+
 ## Features
 
 ### Core Functionality
 
 - 🔍 **Search** - Search by CN or sAMAccountName with vim-style `/` search
 - 📁 **Tree Navigation** - Browse AD organizational structure with lazy loading
-- 👤 **User Management** - View and manage user details, group memberships, create/copy users
+- 👤 **User Management** - View and manage user details, group memberships, create/copy users, enable/disable accounts
 - 👥 **Group Management** - Manage groups and their members
 - 💻 **Computer Management** - View computer object details
 
@@ -29,6 +31,14 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 - Delete objects (with confirmation)
 - Restore deleted objects
 - Unlock user accounts
+- Enable/disable user accounts
+
+#### User Account State Management
+- **Enable accounts**: `:enable` or `:en` commands
+- **Disable accounts**: `:disable` or `:dis` commands  
+- **Unlock accounts**: `:unlock` command (existing)
+- **Status display**: Shows "Disabled: Yes/No" with color coding
+- **Confirmation dialogs**: Red for disable, green for enable operations
 
 ## Installation
 
@@ -105,6 +115,10 @@ You'll be prompted for your AD username and password (credentials are NEVER stor
 :cu [ou]         Same as :createuser
 :copyuser [source] [ou] Copy user account (uses current selection if not specified)
 :unlock           Unlock currently selected locked user account
+:enable          Enable currently selected disabled user account
+:en              Same as :enable
+:disable         Disable currently selected enabled user account
+:dis             Same as :disable
 ```
 
 #### Recovery & History
@@ -338,8 +352,16 @@ MIT License - see LICENSE file for details
 - 🔧 Improved: Command handler pattern
 - 🔧 Improved: Type hints throughout
 - 🔒 Fixed: Removed hardcoded credentials
+- 🔧 Improved: Error handling and user feedback
 
-### Version 1.0.0
+### Version 2.1.0
+- ✨ New: Complete user account state management (enable/disable)
+- 🎯 Added: `:disable` and `:dis` commands to disable enabled user accounts
+- 🎯 Added: `ConfirmDisableDialog` with red styling and warning messages
+- 🎯 Added: UAC flag manipulation for account disabling
+- 🎯 Added: Complete symmetry between enable/disable operations
+- 🔧 Fixed: Removed conflicting keyboard shortcuts in help text
+- 🔧 Improved: Complete user management workflow with proper validation
 
 - Initial release
 - Basic AD browsing and search
