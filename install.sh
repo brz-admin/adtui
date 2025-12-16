@@ -1,13 +1,15 @@
 #!/bin/bash
 # ADTUI Universal Installer
-# Usage: curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
+# Usage: curl -fsSL https://git.brznet.fr/Brz/adtui/src/branch/main/install.sh | sh
 
 set -e
 
 # Configuration
 INSTALL_METHOD="auto"
 INSTALL_DIR="$HOME/.local/bin"
-REPO_URL="https://servgitea.domman.ad/ti2103/adtui"
+PRIMARY_REPO="https://git.brznet.fr/Brz/adtui"
+FALLBACK_REPO="https://servgitea.domman.ad/ti2103/adtui"
+REPO_URL="$PRIMARY_REPO"
 VERSION="latest"
 
 # Colors for output
@@ -111,13 +113,19 @@ detect_install_method() {
 install_pip() {
     log_info "Installing via pip..."
     
+    # Use pip3 if available, otherwise pip
+    local PIP_CMD="pip3"
+    if ! command -v pip3 &> /dev/null; then
+        PIP_CMD="pip"
+    fi
+    
     # Try PyPI first (if published)
-    if pip show adtui &> /dev/null; then
+    if $PIP_CMD show adtui &> /dev/null; then
         log_info "ADTUI already installed, updating..."
-        pip install --upgrade adtui
+        $PIP_CMD install --upgrade adtui
     else
         # Install from git repository
-        pip install git+https://servgitea.domman.ad/ti2103/adtui.git
+        $PIP_CMD install git+https://git.brznet.fr/Brz/adtui.git
     fi
     
     log_success "ADTUI installed via pip"
@@ -172,14 +180,30 @@ install_source() {
     git clone "$REPO_URL" adtui
     cd adtui
     
-    # Install
-    python3 -m pip install --user -e .
+    # Install with pip (check if available)
+    if command -v pip3 &> /dev/null; then
+        python3 -m pip install --user -e .
+    elif command -v pip &> /dev/null; then
+        pip install --user -e .
+    else
+        # Install pip first, then install package
+        log_info "Installing pip first..."
+        curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3
+        python3 -m pip install --user -e .
+    fi
     
     # Cleanup
     cd /
     rm -rf "$TEMP_DIR"
     
     log_success "ADTUI installed from source"
+    
+    # Add to PATH if needed
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        log_warning "~/.local/bin is not in PATH"
+        log_info "Add this to your ~/.bashrc or ~/.zshrc:"
+        echo "export PATH=\"\$PATH:\$HOME/.local/bin\""
+    fi
 }
 
 # Verify installation
