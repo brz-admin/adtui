@@ -5,8 +5,8 @@ PyInstaller spec file for ADTUI - Active Directory Terminal User Interface.
 
 import os
 
-# Get the root directory
-ROOT_DIR = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+# Get the root directory - current working directory should be project root when running pyinstaller
+ROOT_DIR = os.path.abspath('.')
 
 block_cipher = None
 
@@ -15,7 +15,7 @@ a = Analysis(
     pathex=[ROOT_DIR],
     binaries=[],
     datas=[
-        ('styles.tcss', '.'),
+        ('adtui/styles.tcss', 'adtui'),
         ('config.ini.example', '.'),
     ],
     hiddenimports=[
