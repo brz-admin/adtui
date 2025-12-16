@@ -15,21 +15,39 @@ from textual.widgets import TextArea
 import subprocess
 import sys
 
-from .adtree import ADTree
-from .widgets.details_pane import DetailsPane
-from .services import LDAPService, HistoryService, PathService
-from .services.config_service import ConfigService, ADConfig
-from .services.connection_manager import ConnectionManager, ConnectionState
-from .commands import CommandHandler
-from .ui.dialogs import (
-    ConfirmDeleteDialog,
-    ConfirmMoveDialog,
-    ConfirmRestoreDialog,
-    ConfirmUndoDialog,
-    CreateOUDialog,
-    ADSelectionDialog,
-    LoginDialog,
-)
+try:
+    from .adtree import ADTree
+    from .widgets.details_pane import DetailsPane
+    from .services import LDAPService, HistoryService, PathService
+    from .services.config_service import ConfigService, ADConfig
+    from .services.connection_manager import ConnectionManager, ConnectionState
+    from .commands import CommandHandler
+    from .ui.dialogs import (
+        ConfirmDeleteDialog,
+        ConfirmMoveDialog,
+        ConfirmRestoreDialog,
+        ConfirmUndoDialog,
+        CreateOUDialog,
+        ADSelectionDialog,
+        LoginDialog,
+    )
+except ImportError:
+    # Fallback for direct execution
+    from adtree import ADTree
+    from widgets.details_pane import DetailsPane
+    from services import LDAPService, HistoryService, PathService
+    from services.config_service import ConfigService, ADConfig
+    from services.connection_manager import ConnectionManager, ConnectionState
+    from commands import CommandHandler
+    from ui.dialogs import (
+        ConfirmDeleteDialog,
+        ConfirmMoveDialog,
+        ConfirmRestoreDialog,
+        ConfirmUndoDialog,
+        CreateOUDialog,
+        ADSelectionDialog,
+        LoginDialog,
+    )
 from .constants import Severity, MESSAGES
 
 # Configuration will be loaded after AD selection

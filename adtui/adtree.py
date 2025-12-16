@@ -4,7 +4,11 @@ from ldap3 import Connection
 from functools import lru_cache
 import threading
 from typing import Optional
-from services.connection_manager import ConnectionManager
+
+try:
+    from .services.connection_manager import ConnectionManager
+except ImportError:
+    from services.connection_manager import ConnectionManager
 
 
 class ADTree(Tree):
