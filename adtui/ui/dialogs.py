@@ -3,10 +3,22 @@
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
-from textual.widgets import Static, Button, Input, ListView, ListItem, Label, Checkbox
+from textual.widgets import (
+    Static,
+    Button,
+    Input,
+    ListView,
+    ListItem,
+    Label,
+    Checkbox,
+    TextArea,
+)
 from typing import Dict
 import unicodedata
 from ldap3 import Connection
+import sys
+import subprocess
+import re
 
 
 class BaseConfirmDialog(ModalScreen[bool]):

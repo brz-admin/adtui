@@ -194,6 +194,16 @@ CreateUserDialog #dialog, CopyUserDialog #dialog {
     max-height: 40;
 }
 
+/* Enable text selection for mouse copy */
+Static, Label, ADTree, DetailsPane, SearchResultsPane {
+    content-select: text;
+}
+
+/* Make text selectable in all widgets */
+* {
+    content-select: text;
+}
+
 
 
 

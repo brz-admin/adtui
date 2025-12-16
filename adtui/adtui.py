@@ -10,6 +10,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
 from textual.binding import Binding
+from textual.screen import Screen
+from textual.widgets import TextArea
 import subprocess
 import sys
 
@@ -123,6 +125,7 @@ class ADTUI(App):
         Binding("p", "set_password", "Password", show=False),
         Binding("C", "copy_user", "Copy User", show=False),
         Binding("y", "copy_to_clipboard", "Copy Text", show=True),
+        Binding("ctrl+c", "copy_selection", "Copy Selection", show=True),
         Binding("d", "delete_object", "Delete", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
@@ -1158,15 +1161,38 @@ class ADTUI(App):
         )
 
     def action_copy_to_clipboard(self):
-        """Copy current selected DN or label to system clipboard."""
+        """Copy selected object DN to clipboard (legacy - kept for compatibility)."""
         if not self.current_selected_dn:
             self.notify("No object selected to copy", severity="warning")
             return
 
-        # Use DN as primary content, fallback to label
-        text_to_copy = self.current_selected_dn
+        self._copy_to_system_clipboard(self.current_selected_dn, "DN")
 
+    def action_copy_selection(self):
+        """Copy currently selected text to clipboard (Ctrl+C)."""
+        # Try to get text selection from terminal
+        # Note: This is a fallback since TUI apps can't directly access terminal selection
+        # Users should use their terminal's native copy mechanism (Ctrl+Shift+C or right-click)
+        self.notify(
+            "Use terminal's copy function (Ctrl+Shift+C or right-click menu)",
+            severity="information",
+            timeout=3,
+        )
+
+    def _copy_to_system_clipboard(self, text: str, description: str):
+        """Copy text to system clipboard with cross-platform support."""
         try:
+            # Strip ANSI escape codes for clean copy
+            import re
+
+            ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+            clean_text = ansi_escape.sub("", text)
+
+            # Remove excessive whitespace but keep newlines
+            clean_text = "\n".join(
+                line.strip() for line in clean_text.split("\n") if line.strip()
+            )
+
             # Try different clipboard commands based on OS
             if sys.platform == "linux":
                 # Try wl-copy first (Wayland), then xclip (X11)
@@ -1174,14 +1200,20 @@ class ADTUI(App):
                     try:
                         subprocess.run(
                             cmd,
-                            input=text_to_copy,
+                            input=clean_text,
                             text=True,
                             check=True,
                             shell=True,
                             capture_output=True,
                         )
+                        # Truncate long content for notification
+                        display_text = (
+                            clean_text[:50] + "..."
+                            if len(clean_text) > 50
+                            else clean_text
+                        )
                         self.notify(
-                            f"Copied to clipboard: {text_to_copy}",
+                            f"Copied {description}: {display_text}",
                             severity="information",
                         )
                         return
@@ -1189,27 +1221,34 @@ class ADTUI(App):
                         continue
                 # If neither works, try pbcopy (might be available)
                 try:
-                    subprocess.run(
-                        ["pbcopy"], input=text_to_copy, text=True, check=True
+                    subprocess.run(["pbcopy"], input=clean_text, text=True, check=True)
+                    display_text = (
+                        clean_text[:50] + "..." if len(clean_text) > 50 else clean_text
                     )
                     self.notify(
-                        f"Copied to clipboard: {text_to_copy}", severity="information"
+                        f"Copied {description}: {display_text}", severity="information"
                     )
                     return
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     pass
             elif sys.platform == "darwin":
-                subprocess.run(["pbcopy"], input=text_to_copy, text=True, check=True)
+                subprocess.run(["pbcopy"], input=clean_text, text=True, check=True)
+                display_text = (
+                    clean_text[:50] + "..." if len(clean_text) > 50 else clean_text
+                )
                 self.notify(
-                    f"Copied to clipboard: {text_to_copy}", severity="information"
+                    f"Copied {description}: {display_text}", severity="information"
                 )
                 return
             elif sys.platform == "win32":
                 subprocess.run(
-                    ["clip"], input=text_to_copy, text=True, check=True, shell=True
+                    ["clip"], input=clean_text, text=True, check=True, shell=True
+                )
+                display_text = (
+                    clean_text[:50] + "..." if len(clean_text) > 50 else clean_text
                 )
                 self.notify(
-                    f"Copied to clipboard: {text_to_copy}", severity="information"
+                    f"Copied {description}: {display_text}", severity="information"
                 )
                 return
 
