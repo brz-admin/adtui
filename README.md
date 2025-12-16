@@ -79,7 +79,7 @@ docker run -it --rm adtui:latest
 
 ### Method 5: From Source (Development)
 ```bash
-git clone https://git.brznet.fr/Brz/adtui.git
+git clone https://github.com/brz-admin/adtui.git
 cd adtui
 pip install -e .
 ```
@@ -436,7 +436,7 @@ source ~/.bashrc  # or source ~/.zshrc
 
 For issues, questions, or contributions:
 
-- Issues: https://git.brznet.fr/Brz/adtui/issues
+- Issues: https://github.com/brz-admin/adtui/issues
 
 ## Credits
 
