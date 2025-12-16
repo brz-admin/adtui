@@ -79,14 +79,19 @@ check_requirements() {
     ARCH=$(uname -m)
     log_info "Detected: $OS $ARCH"
     
-    # Create install directory if needed
-    mkdir -p "$INSTALL_DIR"
-    
-    # Add to PATH if not already there
-    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-        log_warning "$INSTALL_DIR is not in PATH"
-        log_info "Add this to your ~/.bashrc or ~/.zshrc:"
-        echo "export PATH=\"\$PATH:$INSTALL_DIR\""
+    # Check if adtui is in PATH and INSTALL_DIR is needed
+    if ! command -v adtui &> /dev/null; then
+        log_info "Installing to system directory: $INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR"
+        
+        # Add to PATH if not already there
+        if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            log_warning "$INSTALL_DIR is not in PATH"
+            log_info "Add this to your ~/.bashrc or ~/.zshrc:"
+            echo "export PATH=\"\$PATH:$INSTALL_DIR\""
+        fi
+    else
+        log_info "ADTUI is already in PATH"
     fi
 }
 
@@ -181,16 +186,25 @@ install_source() {
     git clone "$REPO_URL" adtui
     cd adtui
     
-    # Install with pip (check if available)
+# Install with system-wide pip (no user install)
     if command -v pip3 &> /dev/null; then
-        python3 -m pip install --user -e .
+        pip3 install -e .
     elif command -v pip &> /dev/null; then
-        pip install --user -e .
+        pip install -e .
     else
         # Install pip first, then install package
         log_info "Installing pip first..."
         curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3
-        python3 -m pip install --user -e .
+        python3 -m pip install -e .
+    fi
+    
+    log_success "ADTUI installed system-wide"
+    
+    # Add to PATH if needed
+    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+        log_warning "$INSTALL_DIR is not in PATH"
+        log_info "Add this to your ~/.bashrc or ~/.zshrc:"
+        echo "export PATH=\"\$PATH:$INSTALL_DIR\""
     fi
     
     # Cleanup
