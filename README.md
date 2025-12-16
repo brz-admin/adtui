@@ -86,13 +86,28 @@ pip install -e .
 
 ## Configuration
 
-1. Copy the example config:
+ADTUI will automatically search for configuration files in this order of priority:
+
+1. **Environment Variable**: `ADTUI_CONFIG` (if set)
+2. **User Config**: `~/.config/adtui/config.ini` (preferred)
+3. **Legacy Config**: `~/.adtui_config.ini` 
+4. **Current Directory**: `./config.ini` (fallback)
+
+### Quick Setup
+
+1. Create configuration directory:
 
 ```bash
-cp config.ini.example config.ini
+mkdir -p ~/.config/adtui
 ```
 
-2. Edit `config.ini` with your AD details:
+2. Copy the example config:
+
+```bash
+cp config.ini.example ~/.config/adtui/config.ini
+```
+
+3. Edit `~/.config/adtui/config.ini` with your AD details:
 
 ```ini
 [ldap]
@@ -100,6 +115,15 @@ server = your-dc.domain.com
 domain = domain.com
 base_dn = dc=domain,dc=com
 use_ssl = false
+```
+
+### Alternative Setup (Current Directory)
+
+If you prefer to keep config in the current directory:
+
+```bash
+cp config.ini.example config.ini
+# Edit config.ini with your AD details
 ```
 
 ## Usage

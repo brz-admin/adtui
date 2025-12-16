@@ -264,9 +264,25 @@ main() {
     log_success "🎉 ADTUI installation completed successfully!"
     echo ""
     echo "To start using ADTUI:"
-    echo "1. Copy configuration: cp config.ini.example config.ini"
-    echo "2. Edit config.ini with your AD details"
-    echo "3. Run: adtui"
+    echo "1. Create configuration directory:"
+    echo "   mkdir -p ~/.config/adtui"
+    echo ""
+    echo "2. Copy configuration template:"
+    if [ "$INSTALL_METHOD" = "source" ] || [ "$INSTALL_METHOD" = "python" ]; then
+        echo "   cp config.ini.example ~/.config/adtui/config.ini"
+    else
+        echo "   wget -q https://git.brznet.fr/Brz/adtui/raw/branch/main/config.ini.example -O ~/.config/adtui/config.ini"
+    fi
+    echo ""
+    echo "3. Edit configuration with your AD details:"
+    echo "   nano ~/.config/adtui/config.ini"
+    echo ""
+    echo "4. Run ADTUI:"
+    if [ "$INSTALL_METHOD" = "source" ] || [ "$INSTALL_METHOD" = "python" ]; then
+        echo "   adtui"
+    else
+        echo "   $INSTALL_DIR/adtui"
+    fi
     echo ""
 }
 
