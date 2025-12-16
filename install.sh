@@ -1,13 +1,13 @@
 #!/bin/bash
 # ADTUI Universal Installer
-# Usage: curl -fsSL https://git.brznet.fr/brz/adtui/raw/branch/main/install.sh | sh
+# Usage: curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
 
 set -e
 
 # Configuration
 INSTALL_METHOD="auto"
 INSTALL_DIR="$HOME/.local/bin"
-REPO_URL="https://git.brznet.fr/brz/adtui"
+REPO_URL="https://servgitea.domman.ad/ti2103/adtui"
 VERSION="latest"
 
 # Colors for output
@@ -117,7 +117,7 @@ install_pip() {
         pip install --upgrade adtui
     else
         # Install from git repository
-        pip install git+https://git.brznet.fr/brz/adtui.git
+        pip install git+https://servgitea.domman.ad/ti2103/adtui.git
     fi
     
     log_success "ADTUI installed via pip"
