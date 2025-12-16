@@ -10,6 +10,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
 from textual.binding import Binding
+import subprocess
+import sys
 
 from .adtree import ADTree
 from .widgets.details_pane import DetailsPane
@@ -120,6 +122,7 @@ class ADTUI(App):
         Binding("g", "manage_groups", "Groups", show=False),
         Binding("p", "set_password", "Password", show=False),
         Binding("C", "copy_user", "Copy User", show=False),
+        Binding("y", "copy_to_clipboard", "Copy Text", show=True),
         Binding("d", "delete_object", "Delete", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
@@ -1153,6 +1156,71 @@ class ADTUI(App):
             ),
             self.handle_copy_user_confirmation,
         )
+
+    def action_copy_to_clipboard(self):
+        """Copy current selected DN or label to system clipboard."""
+        if not self.current_selected_dn:
+            self.notify("No object selected to copy", severity="warning")
+            return
+
+        # Use DN as primary content, fallback to label
+        text_to_copy = self.current_selected_dn
+
+        try:
+            # Try different clipboard commands based on OS
+            if sys.platform == "linux":
+                # Try wl-copy first (Wayland), then xclip (X11)
+                for cmd in ["wl-copy", "xclip -selection clipboard"]:
+                    try:
+                        subprocess.run(
+                            cmd,
+                            input=text_to_copy,
+                            text=True,
+                            check=True,
+                            shell=True,
+                            capture_output=True,
+                        )
+                        self.notify(
+                            f"Copied to clipboard: {text_to_copy}",
+                            severity="information",
+                        )
+                        return
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        continue
+                # If neither works, try pbcopy (might be available)
+                try:
+                    subprocess.run(
+                        ["pbcopy"], input=text_to_copy, text=True, check=True
+                    )
+                    self.notify(
+                        f"Copied to clipboard: {text_to_copy}", severity="information"
+                    )
+                    return
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    pass
+            elif sys.platform == "darwin":
+                subprocess.run(["pbcopy"], input=text_to_copy, text=True, check=True)
+                self.notify(
+                    f"Copied to clipboard: {text_to_copy}", severity="information"
+                )
+                return
+            elif sys.platform == "win32":
+                subprocess.run(
+                    ["clip"], input=text_to_copy, text=True, check=True, shell=True
+                )
+                self.notify(
+                    f"Copied to clipboard: {text_to_copy}", severity="information"
+                )
+                return
+
+            # If we get here, clipboard commands failed
+            self.notify(
+                "Clipboard not available. Install xclip or wl-copy on Linux.",
+                severity="warning",
+            )
+
+        except Exception as e:
+            self.notify(f"Failed to copy to clipboard: {e}", severity="error")
 
     def _get_current_ou(self) -> str:
         """Get currently selected OU DN."""
