@@ -44,7 +44,7 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ### Method 1: Universal One-Liner (Recommended)
 ```bash
-curl -fsSL https://git.brznet.fr/brz/adtui/raw/branch/main/install.sh | sh
+curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
 ```
 
 ### Method 2: Python Package
@@ -55,7 +55,7 @@ pip install adtui
 ### Method 3: Download Executable (No Python Required)
 ```bash
 # Linux/macOS
-curl -L https://git.brznet.fr/brz/adtui/releases/latest/download/adtui -o adtui
+curl -L https://servgitea.domman.ad/ti2103/adtui/releases/latest/download/adtui -o adtui
 chmod +x adtui
 ./adtui
 
@@ -70,7 +70,7 @@ docker run -it --rm adtui:latest
 
 ### Method 5: From Source (Development)
 ```bash
-git clone https://git.brznet.fr/brz/adtui.git
+git clone https://servgitea.domman.ad/ti2103/adtui.git
 cd adtui
 pip install -e .
 ```
