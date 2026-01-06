@@ -1,14 +1,17 @@
 """Command handler for parsing and executing commands."""
 
-from typing import TYPE_CHECKING, Callable, Dict, Optional
-import sys
+import logging
 import os
+import sys
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from constants import MESSAGES, Severity
 
 if TYPE_CHECKING:
     from textual.app import App
+
+logger = logging.getLogger(__name__)
 
 
 class CommandHandler:
@@ -253,7 +256,8 @@ class CommandHandler:
                 ]
                 return "user" in obj_classes and "computer" not in obj_classes
             return False
-        except:
+        except Exception as e:
+            logger.debug("Error checking if object is user: %s", e)
             return False
 
     def _handle_create_user(self, args: str) -> None:

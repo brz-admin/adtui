@@ -1,19 +1,18 @@
 """ADTUI - Active Directory Terminal UI - Refactored Version."""
 
-import configparser
+import logging
 import os
-import getpass
-from typing import Optional
-
-from ldap3 import Server, Connection, ALL
-from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
-from textual.binding import Binding
-from textual.screen import Screen
-from textual.widgets import TextArea
 import subprocess
 import sys
+from typing import Optional
+
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Static, Input, Footer, ListView, ListItem, Label, Tree
+from textual.binding import Binding
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 try:
     from .adtree import ADTree
@@ -77,28 +76,25 @@ def create_connection_manager(
     """
     # For password operations, AD requires SSL/TLS
     if not ad_config.use_ssl:
-        print(
-            "WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini"
+        logger.warning(
+            "Password operations require SSL/TLS. Enable use_ssl in config.ini"
         )
 
-    try:
-        # Create connection manager with retry settings from config
-        manager = ConnectionManager(
-            ad_config=ad_config,
-            username=username,
-            password=password,
-            max_retries=ad_config.max_retries,
-            initial_retry_delay=ad_config.initial_retry_delay,
-            max_retry_delay=ad_config.max_retry_delay,
-            health_check_interval=ad_config.health_check_interval,
-        )
+    # Create connection manager with retry settings from config
+    manager = ConnectionManager(
+        ad_config=ad_config,
+        username=username,
+        password=password,
+        max_retries=ad_config.max_retries,
+        initial_retry_delay=ad_config.initial_retry_delay,
+        max_retry_delay=ad_config.max_retry_delay,
+        health_check_interval=ad_config.health_check_interval,
+    )
 
-        if not ad_config.use_ssl:
-            print("INFO: Connected without SSL. Password operations will be disabled.")
+    if not ad_config.use_ssl:
+        logger.info("Connected without SSL. Password operations will be disabled.")
 
-        return manager
-    except Exception as e:
-        raise
+    return manager
 
 
 class SearchResultsPane(ListView):
@@ -1273,7 +1269,8 @@ class ADTUI(App):
                 ]
                 return "user" in obj_classes and "computer" not in obj_classes
             return False
-        except:
+        except Exception as e:
+            logger.debug("Error checking if object is user: %s", e)
             return False
 
     def refresh_current_view(self):
@@ -1298,9 +1295,9 @@ def main():
     # Validate configuration
     is_valid, issues = config_service.validate_config()
     if not is_valid:
-        print("Configuration errors:")
+        logger.error("Configuration errors:")
         for issue in issues:
-            print(f"  - {issue}")
+            logger.error("  - %s", issue)
         return
 
     # Main loop to allow restarting login on auth failure
@@ -1416,13 +1413,13 @@ def main():
                 if getattr(app, "auth_failed", False):
                     # Clear screen and show message before restarting login
                     os.system("cls" if os.name == "nt" else "clear")
-                    print("Authentication failed. Please try again.\n")
+                    logger.warning("Authentication failed. Please try again.")
                     continue
                 else:
                     # Normal exit - break the loop
                     break
             except Exception as e:
-                print(f"Error running application: {e}")
+                logger.error("Error running application: %s", e)
                 break
         else:
             # No credentials provided, exit

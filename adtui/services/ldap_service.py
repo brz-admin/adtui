@@ -1,15 +1,25 @@
 """LDAP Service - Handles all Active Directory operations."""
 
-from typing import List, Dict, Optional, Tuple
-from ldap3 import Connection, MODIFY_DELETE, MODIFY_REPLACE, MODIFY_ADD
-from datetime import datetime
-import sys
+import logging
 import os
+import sys
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple, Any
+
+from ldap3 import Connection, MODIFY_DELETE, MODIFY_REPLACE, MODIFY_ADD
 
 # Add parent directory to path to import constants
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from constants import ObjectIcon, ObjectType, SearchScope, LDAPControl
+from constants import (
+    ObjectIcon,
+    ObjectType,
+    SearchScope,
+    LDAPControl,
+    UserAccountControl,
+)
 from .connection_manager import ConnectionManager
+
+logger = logging.getLogger(__name__)
 
 
 class LDAPService:
@@ -210,7 +220,8 @@ class LDAPService:
                 return len(conn.entries) > 0
 
             return self.connection_manager.execute_with_retry(validate_op)
-        except:
+        except Exception as e:
+            logger.error("Error validating OU: %s", e)
             return False
 
     def search_ous(self, base_dn: str, prefix: str = "", limit: int = 50) -> List[Dict]:
@@ -942,7 +953,10 @@ class LDAPService:
                                 )
                                 if result:
                                     groups_to_add.append(group_dn)
-                            except:
+                            except Exception as e:
+                                logger.debug(
+                                    "Could not add user to group %s: %s", group_dn, e
+                                )
                                 continue  # Skip groups we can't add to
 
                         if groups_to_add:
