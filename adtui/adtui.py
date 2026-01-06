@@ -199,8 +199,8 @@ class ADTUI(App):
         self.current_selected_dn: Optional[str] = None
         self.current_selected_label: Optional[str] = None
 
-        # Connection status
-        self.connection_status_widget = None
+        # Auth failure flag - used to signal main() to restart login flow
+        self.auth_failed = False
 
     def _initialize_services(self):
         """Initialize services after connection is established."""
@@ -232,11 +232,6 @@ class ADTUI(App):
             self._on_authentication_failure
         )
 
-        # Initialize connection status display
-        if hasattr(self, "connection_status_widget") and self.connection_status_widget:
-            initial_state = self.connection_manager.get_state()
-            self._update_connection_status_display(initial_state)
-
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
         # Ensure all required attributes exist
@@ -252,33 +247,20 @@ class ADTUI(App):
         if not hasattr(self, "search_results_pane") or self.search_results_pane is None:
             self.search_results_pane = SearchResultsPane(id="search-results-pane")
 
-        # Connection status widget at the top
-        from textual.widgets import Static
-
-        self.connection_status_widget = Static(
-            "🔴 Disconnected", id="connection-status"
-        )
-        yield self.connection_status_widget
-
         with Horizontal():
             with Vertical():
                 yield self.adtree
             with Vertical():
                 yield self.details
                 yield self.search_results_pane
-        yield Footer()
         yield Input(placeholder=": command/search", id="command-input")
+        yield Footer()
 
     def on_mount(self):
         """Handle mount event."""
         cmd_input = self.query_one("#command-input", Input)
         cmd_input.visible = False
         self._update_footer()
-
-        # Initialize connection status display
-        if hasattr(self, "connection_manager") and self.connection_manager:
-            initial_state = self.connection_manager.get_state()
-            self._update_connection_status_display(initial_state)
 
         # Expand tree to show root level on startup with delay to ensure initialization
         self.set_timer(0.5, self._expand_tree_on_startup)
@@ -450,74 +432,56 @@ class ADTUI(App):
             state: New connection state
             error: Optional error message
         """
-        if state == ConnectionState.CONNECTED:
-            self.notify("Connected to Active Directory", severity="information")
-            # Rebuild tree when connection is established
-            if hasattr(self, "adtree") and self.adtree:
-                self.adtree.build_tree()
-        elif state == ConnectionState.RECONNECTING:
-            self.notify(f"Reconnecting to AD... {error or ''}", severity="warning")
-        elif state == ConnectionState.FAILED:
-            self.notify(
-                f"Connection failed: {error or 'Unknown error'}", severity="error"
-            )
 
-        # Update connection status indicator if it exists
-        if self.connection_status_widget:
-            self._update_connection_status_display(state)
+        # Use call_from_thread since this callback may be invoked from background threads
+        def update_ui():
+            if state == ConnectionState.CONNECTED:
+                self.notify("Connected to Active Directory", severity="information")
+                # Rebuild tree when connection is established
+                if hasattr(self, "adtree") and self.adtree:
+                    self.adtree.build_tree()
+            elif state == ConnectionState.RECONNECTING:
+                self.notify(f"Reconnecting to AD... {error or ''}", severity="warning")
+            elif state == ConnectionState.FAILED:
+                self.notify(
+                    f"Connection failed: {error or 'Unknown error'}", severity="error"
+                )
+
+        self.call_from_thread(update_ui)
 
     def _on_authentication_failure(self):
         """Handle authentication failure - exit to restart login flow."""
-        try:
-            print(": _on_authentication_failure called")
-            self.notify(
-                "Authentication failed. Please check your credentials.",
-                severity="error",
-            )
 
-            # Clear current connection and services
-            self.connection_manager = None
-            self.ldap_service = None
-            self.history_service = None
-            self.path_service = None
-            self.command_handler = None
+        # Use call_from_thread since this may be called from connection manager's background thread
+        def handle_auth_failure():
+            try:
+                # Set auth failure flag so main() knows to restart login
+                self.auth_failed = True
 
-            # Reset tree to empty state
-            if hasattr(self, "adtree") and self.adtree:
-                self.adtree = ADTree(None, self.base_dn)
+                # Clear current connection and services
+                self.connection_manager = None
+                self.ldap_service = None
+                self.history_service = None
+                self.path_service = None
+                self.command_handler = None
 
-            # Clear details pane
-            if hasattr(self, "details") and self.details:
-                self.details.update_content("No connection", None, None)
+                # Reset tree to empty state
+                if hasattr(self, "adtree") and self.adtree:
+                    self.adtree = ADTree(None, self.base_dn)
 
-            # Exit main app to trigger login restart in main script
-            print(": Exiting main app to restart login flow")
-            self.exit()
+                # Clear details pane
+                if hasattr(self, "details") and self.details:
+                    self.details.update_content("No connection", None, None)
 
-        except Exception as e:
-            import traceback
+                # Exit main app to trigger login restart in main script
+                self.exit()
 
-            traceback.print_exc()
+            except Exception as e:
+                import traceback
 
-    def _update_connection_status_display(self, state: ConnectionState):
-        """Update the connection status widget display.
+                traceback.print_exc()
 
-        Args:
-            state: Current connection state
-        """
-        if not self.connection_status_widget:
-            return
-
-        status_map = {
-            ConnectionState.CONNECTED: "🟢 Connected",
-            ConnectionState.CONNECTING: "🟡 Connecting...",
-            ConnectionState.RECONNECTING: "🟡 Reconnecting...",
-            ConnectionState.DISCONNECTED: "🔴 Disconnected",
-            ConnectionState.FAILED: "🔴 Connection Failed",
-        }
-
-        status_text = status_map.get(state, "❓ Unknown")
-        self.connection_status_widget.update(status_text)
+        self.call_from_thread(handle_auth_failure)
 
     # ==================== Input Handling ====================
 
@@ -862,11 +826,13 @@ class ADTUI(App):
 
         if success:
             self.notify(message, severity=Severity.INFORMATION.value)
-            self.current_selected_dn = new_dn
-            if self.current_selected_label:
-                self.details.update_content(
-                    self.current_selected_label, new_dn, self.connection_manager
-                )
+            # Clear current selection since the object was deleted
+            self.current_selected_dn = None
+            self.current_selected_label = None
+            # Clear the details pane
+            if hasattr(self, "details") and self.details:
+                self.details.update_content("No selection", None, None)
+            # Refresh the OU tree to reflect the deletion
             self.action_refresh_ou()
         else:
             self.notify(message, severity=Severity.ERROR.value)
@@ -1337,106 +1303,130 @@ def main():
             print(f"  - {issue}")
         return
 
-    # Global variables to store login results
-    selected_domain = None
-    login_credentials = None
+    # Main loop to allow restarting login on auth failure
+    while True:
+        # Global variables to store login results
+        selected_domain = None
+        login_credentials = None
+        user_cancelled = False
 
-    # Create a simple app for the login flow
-    class LoginFlowApp(App):
-        CSS = """
-        Screen {
-            layout: grid;
-            grid-size: 1 1;
-            background: $background;
-        }
-        
-        Static {
-            text-align: center;
-            content-align: center middle;
-        }
-        """
+        # Create a simple app for the login flow
+        class LoginFlowApp(App):
+            CSS = """
+            Screen {
+                layout: grid;
+                grid-size: 1 1;
+                background: $background;
+            }
+            
+            Static {
+                text-align: center;
+                content-align: center middle;
+            }
+            """
 
-        def compose(self) -> ComposeResult:
-            ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
+            def compose(self) -> ComposeResult:
+                ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
 [blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
 [dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
 
-            yield Static(
-                f"{ascii_art}\n\n[bold cyan]Active Directory TUI[/bold cyan]\n"
-            )
-
-        def on_mount(self) -> None:
-            nonlocal selected_domain, login_credentials
-
-            # Check if we need to show AD selection dialog
-            if config_service.has_multiple_domains():
-                # Show AD selection dialog first
-                self.push_screen(
-                    ADSelectionDialog(config_service.ad_configs),
-                    self.handle_ad_selection,
+                yield Static(
+                    f"{ascii_art}\n\n[bold cyan]Active Directory TUI[/bold cyan]\n"
                 )
-            else:
-                # Skip AD selection, use the default domain
-                selected_domain = config_service.get_default_domain()
-                self.show_login_dialog()
 
-        def handle_ad_selection(self, domain):
-            """Handle AD domain selection."""
-            nonlocal selected_domain
-            if domain:
-                selected_domain = domain
-                self.show_login_dialog()
-            else:
-                self.exit()
+            def on_mount(self) -> None:
+                nonlocal selected_domain, login_credentials
 
-        def show_login_dialog(self):
-            """Show the login dialog."""
-            nonlocal login_credentials
+                # Check if we need to show AD selection dialog
+                if config_service.has_multiple_domains():
+                    # Show AD selection dialog first
+                    self.push_screen(
+                        ADSelectionDialog(config_service.ad_configs),
+                        self.handle_ad_selection,
+                    )
+                else:
+                    # Skip AD selection, use the default domain
+                    selected_domain = config_service.get_default_domain()
+                    self.show_login_dialog()
+
+            def handle_ad_selection(self, domain):
+                """Handle AD domain selection."""
+                nonlocal selected_domain, user_cancelled
+                if domain:
+                    selected_domain = domain
+                    self.show_login_dialog()
+                else:
+                    user_cancelled = True
+                    self.exit()
+
+            def show_login_dialog(self):
+                """Show the login dialog."""
+                nonlocal login_credentials
+                ad_config = config_service.get_config(selected_domain)
+                self.push_screen(
+                    LoginDialog(last_user, ad_config.domain), self.handle_login_result
+                )
+
+            def handle_login_result(self, result):
+                """Handle login result."""
+                nonlocal login_credentials, user_cancelled
+                if result:
+                    username, password = result
+
+                    # Save username to file
+                    with open(LAST_USER_FILE, "w") as f:
+                        f.write(username)
+
+                    # Store credentials and exit login app
+                    login_credentials = (username, password)
+                    self.exit()
+                else:
+                    user_cancelled = True
+                    self.exit()
+
+            def on_key(self, event) -> None:
+                nonlocal user_cancelled
+                if event.key == "escape":
+                    user_cancelled = True
+                    self.exit()
+
+        # Run login flow app first
+        login_app = LoginFlowApp()
+        login_app.run()
+
+        # If user cancelled (escape or cancel button), exit completely
+        if user_cancelled:
+            return
+
+        # After login app exits, check if we have credentials and start main app
+        if login_credentials and selected_domain:
+            # Clear the screen immediately to minimize CLI gap
+            os.system("cls" if os.name == "nt" else "clear")
+
+            username, password = login_credentials
             ad_config = config_service.get_config(selected_domain)
-            self.push_screen(
-                LoginDialog(last_user, ad_config.domain), self.handle_login_result
-            )
 
-        def handle_login_result(self, result):
-            """Handle login result."""
-            nonlocal login_credentials
-            if result:
-                username, password = result
+            try:
+                # Create and run the main app with credentials and AD config
+                app = ADTUI(username, password, ad_config)
+                app.run()
 
-                # Save username to file
-                with open(LAST_USER_FILE, "w") as f:
-                    f.write(username)
-
-                # Store credentials and exit login app
-                login_credentials = (username, password)
-                self.exit()
-            else:
-                self.exit()
-
-        def on_key(self, event) -> None:
-            if event.key == "escape":
-                self.exit()
-
-    # Run login flow app first
-    login_app = LoginFlowApp()
-    login_app.run()
-
-    # After login app exits, check if we have credentials and start main app
-    if login_credentials and selected_domain:
-        # Clear the screen immediately to minimize CLI gap
-        os.system("cls" if os.name == "nt" else "clear")
-
-        username, password = login_credentials
-        ad_config = config_service.get_config(selected_domain)
-
-        try:
-            # Create and run the main app with credentials and AD config
-            app = ADTUI(username, password, ad_config)
-            app.run()
-        except Exception as e:
-            print(f"Error running application: {e}")
-    else:
-        exit()
+                # Check if app exited due to auth failure (should restart login)
+                # If app.auth_failed is True, continue loop to show login again
+                if getattr(app, "auth_failed", False):
+                    # Clear screen and show message before restarting login
+                    os.system("cls" if os.name == "nt" else "clear")
+                    print("Authentication failed. Please try again.\n")
+                    continue
+                else:
+                    # Normal exit - break the loop
+                    break
+            except Exception as e:
+                print(f"Error running application: {e}")
+                break
+        else:
+            # No credentials provided, exit
+            return
 
 
 if __name__ == "__main__":
