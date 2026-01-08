@@ -8,6 +8,8 @@ set -e
 # Configuration
 REPO_URL="https://github.com/brz-admin/adtui.git"
 FALLBACK_REPO="https://servgitea.domman.ad/ti2103/adtui.git"
+INSTALL_DIR="$HOME/.local/share/adtui"
+BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/adtui"
 CONFIG_URL="https://raw.githubusercontent.com/brz-admin/adtui/main/config.ini.example"
 FALLBACK_CONFIG_URL="https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/config.ini.example"
@@ -55,76 +57,87 @@ check_python() {
     fi
 }
 
-# Check/install pip
-check_pip() {
-    info "Checking pip..."
-    
-    if $PYTHON_CMD -m pip --version &> /dev/null; then
-        success "pip is available"
-        PIP_CMD="$PYTHON_CMD -m pip"
-    else
-        warn "pip not found, installing..."
-        curl -fsSL https://bootstrap.pypa.io/get-pip.py | $PYTHON_CMD
-        PIP_CMD="$PYTHON_CMD -m pip"
-        success "pip installed"
-    fi
-}
-
-# Install ADTUI
+# Create virtual environment and install ADTUI
 install_adtui() {
+    info "Creating virtual environment in $INSTALL_DIR..."
+    
+    # Create installation directory
+    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$BIN_DIR"
+    
+    # Create virtual environment
+    $PYTHON_CMD -m venv "$INSTALL_DIR/venv"
+    
+    # Activate and install
+    source "$INSTALL_DIR/venv/bin/activate"
+    
     info "Installing ADTUI..."
     
+    # Upgrade pip first
+    pip install --upgrade pip > /dev/null 2>&1
+    
     # Try primary repo first
-    if $PIP_CMD install --user "git+${REPO_URL}" 2>/dev/null; then
+    if pip install "git+${REPO_URL}" 2>/dev/null; then
         success "ADTUI installed from primary repository"
-    elif $PIP_CMD install --user "git+${FALLBACK_REPO}" 2>/dev/null; then
+    elif pip install "git+${FALLBACK_REPO}" 2>/dev/null; then
         success "ADTUI installed from fallback repository"
     else
+        deactivate
         error "Failed to install ADTUI. Check your internet connection."
     fi
+    
+    deactivate
+    
+    # Create wrapper script in ~/.local/bin
+    info "Creating adtui command..."
+    cat > "$BIN_DIR/adtui" << 'EOF'
+#!/bin/bash
+source "$HOME/.local/share/adtui/venv/bin/activate"
+python -m adtui "$@"
+deactivate
+EOF
+    chmod +x "$BIN_DIR/adtui"
+    
+    success "ADTUI installed successfully"
 }
 
 # Setup PATH
 setup_path() {
     info "Checking PATH..."
     
-    # Determine user bin directory
-    if [[ "$OS_TYPE" == "mac" ]]; then
-        USER_BIN="$HOME/Library/Python/$(echo $PYTHON_VERSION | cut -d. -f1-2)/bin"
-    else
-        USER_BIN="$HOME/.local/bin"
-    fi
-    
-    # Check if adtui is accessible
-    if command -v adtui &> /dev/null; then
-        success "adtui is in PATH"
+    # Check if BIN_DIR is in PATH
+    if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
+        success "$BIN_DIR is already in PATH"
         return
     fi
     
-    # Check if it exists in user bin
-    if [[ -f "$USER_BIN/adtui" ]]; then
-        warn "$USER_BIN is not in your PATH"
-        
-        # Detect shell
-        SHELL_NAME=$(basename "$SHELL")
-        case "$SHELL_NAME" in
-            zsh)  SHELL_RC="$HOME/.zshrc" ;;
-            bash) SHELL_RC="$HOME/.bashrc" ;;
-            *)    SHELL_RC="$HOME/.profile" ;;
-        esac
-        
-        # Add to PATH
-        if ! grep -q "$USER_BIN" "$SHELL_RC" 2>/dev/null; then
-            echo "" >> "$SHELL_RC"
-            echo "# Added by ADTUI installer" >> "$SHELL_RC"
-            echo "export PATH=\"\$PATH:$USER_BIN\"" >> "$SHELL_RC"
-            success "Added $USER_BIN to PATH in $SHELL_RC"
-            warn "Run 'source $SHELL_RC' or restart your terminal to apply"
-        fi
-        
-        # Export for current session
-        export PATH="$PATH:$USER_BIN"
+    # Detect shell config file
+    SHELL_NAME=$(basename "$SHELL")
+    case "$SHELL_NAME" in
+        zsh)  SHELL_RC="$HOME/.zshrc" ;;
+        bash) 
+            if [[ -f "$HOME/.bash_profile" ]]; then
+                SHELL_RC="$HOME/.bash_profile"
+            else
+                SHELL_RC="$HOME/.bashrc"
+            fi
+            ;;
+        *)    SHELL_RC="$HOME/.profile" ;;
+    esac
+    
+    # Add to PATH if not already there
+    if ! grep -q "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+        echo "" >> "$SHELL_RC"
+        echo "# Added by ADTUI installer" >> "$SHELL_RC"
+        echo "export PATH=\"\$PATH:$BIN_DIR\"" >> "$SHELL_RC"
+        success "Added $BIN_DIR to PATH in $SHELL_RC"
+        PATH_UPDATED=1
+    else
+        success "PATH already configured in $SHELL_RC"
     fi
+    
+    # Export for current session
+    export PATH="$PATH:$BIN_DIR"
 }
 
 # Setup configuration
@@ -154,6 +167,13 @@ print_instructions() {
     echo -e "${GREEN}║          ADTUI Installation Complete!                      ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
+    
+    if [[ -n "$PATH_UPDATED" ]]; then
+        echo -e "${YELLOW}IMPORTANT: Run this command to update your PATH:${NC}"
+        echo -e "   ${BLUE}source $SHELL_RC${NC}"
+        echo ""
+    fi
+    
     echo "Next steps:"
     echo ""
     echo "1. Edit the configuration file with your AD server details:"
@@ -166,20 +186,71 @@ print_instructions() {
     echo "3. Launch ADTUI:"
     echo -e "   ${BLUE}adtui${NC}"
     echo ""
-    
-    if [[ -n "$SHELL_RC" ]]; then
-        echo -e "${YELLOW}Note: Run 'source $SHELL_RC' first if 'adtui' command is not found.${NC}"
-        echo ""
-    fi
 }
 
 # Uninstall function
 uninstall() {
     info "Uninstalling ADTUI..."
-    $PYTHON_CMD -m pip uninstall -y adtui 2>/dev/null || true
+    
+    # Remove virtual environment
+    if [[ -d "$INSTALL_DIR" ]]; then
+        rm -rf "$INSTALL_DIR"
+        success "Removed $INSTALL_DIR"
+    fi
+    
+    # Remove wrapper script
+    if [[ -f "$BIN_DIR/adtui" ]]; then
+        rm -f "$BIN_DIR/adtui"
+        success "Removed $BIN_DIR/adtui"
+    fi
+    
     success "ADTUI uninstalled"
+    echo ""
     echo "Configuration at $CONFIG_DIR was preserved."
     echo "Remove it manually if needed: rm -rf $CONFIG_DIR"
+    exit 0
+}
+
+# Update function
+update() {
+    info "Updating ADTUI..."
+    
+    if [[ ! -d "$INSTALL_DIR/venv" ]]; then
+        error "ADTUI is not installed. Run the installer without --update first."
+    fi
+    
+    source "$INSTALL_DIR/venv/bin/activate"
+    
+    # Try primary repo first
+    if pip install --upgrade "git+${REPO_URL}" 2>/dev/null; then
+        success "ADTUI updated from primary repository"
+    elif pip install --upgrade "git+${FALLBACK_REPO}" 2>/dev/null; then
+        success "ADTUI updated from fallback repository"
+    else
+        deactivate
+        error "Failed to update ADTUI. Check your internet connection."
+    fi
+    
+    deactivate
+    success "ADTUI updated successfully"
+    exit 0
+}
+
+# Show help
+show_help() {
+    echo "ADTUI Installer"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --uninstall, -u    Remove ADTUI"
+    echo "  --update           Update ADTUI to latest version"
+    echo "  --help, -h         Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  Install:   curl -fsSL <url>/install.sh | bash"
+    echo "  Update:    ~/.local/share/adtui/install.sh --update"
+    echo "  Uninstall: ~/.local/share/adtui/install.sh --uninstall"
     exit 0
 }
 
@@ -191,16 +262,30 @@ main() {
     echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    # Check for uninstall flag
-    if [[ "$1" == "--uninstall" ]] || [[ "$1" == "-u" ]]; then
-        detect_os
-        check_python
-        uninstall
-    fi
+    # Parse arguments
+    case "$1" in
+        --uninstall|-u)
+            detect_os
+            uninstall
+            ;;
+        --update)
+            detect_os
+            check_python
+            update
+            ;;
+        --help|-h)
+            show_help
+            ;;
+        "")
+            # Normal install
+            ;;
+        *)
+            error "Unknown option: $1. Use --help for usage."
+            ;;
+    esac
     
     detect_os
     check_python
-    check_pip
     install_adtui
     setup_path
     setup_config
