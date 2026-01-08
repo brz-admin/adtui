@@ -491,8 +491,18 @@ class ADTUI(App):
         if self.command_mode and event.input.id == "command-input":
             value = event.value
 
-            if value.startswith(":m ") or value.startswith(":move "):
-                prefix_len = 3 if value.startswith(":m ") else 6
+            # Check for move commands: :m, :mv, :move
+            if (
+                value.startswith(":m ")
+                or value.startswith(":mv ")
+                or value.startswith(":move ")
+            ):
+                if value.startswith(":move "):
+                    prefix_len = 6
+                elif value.startswith(":mv "):
+                    prefix_len = 4
+                else:
+                    prefix_len = 3
                 path_input = value[prefix_len:]
                 # Trigger autocomplete if ends with / or has content
                 if path_input.endswith("/") or len(path_input) >= 1:
