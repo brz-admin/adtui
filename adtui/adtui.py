@@ -1,19 +1,18 @@
 """ADTUI - Active Directory Terminal UI - Refactored Version."""
 
-import configparser
+import logging
 import os
-import getpass
-from typing import Optional
-
-from ldap3 import Server, Connection, ALL
-from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Tree, Static, Input, Footer, ListView, ListItem, Label
-from textual.binding import Binding
-from textual.screen import Screen
-from textual.widgets import TextArea
 import subprocess
 import sys
+from typing import Optional
+
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Static, Input, Footer, ListView, ListItem, Label, Tree
+from textual.binding import Binding
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 try:
     from .adtree import ADTree
@@ -77,28 +76,25 @@ def create_connection_manager(
     """
     # For password operations, AD requires SSL/TLS
     if not ad_config.use_ssl:
-        print(
-            "WARNING: Password operations require SSL/TLS. Enable use_ssl in config.ini"
+        logger.warning(
+            "Password operations require SSL/TLS. Enable use_ssl in config.ini"
         )
 
-    try:
-        # Create connection manager with retry settings from config
-        manager = ConnectionManager(
-            ad_config=ad_config,
-            username=username,
-            password=password,
-            max_retries=ad_config.max_retries,
-            initial_retry_delay=ad_config.initial_retry_delay,
-            max_retry_delay=ad_config.max_retry_delay,
-            health_check_interval=ad_config.health_check_interval,
-        )
+    # Create connection manager with retry settings from config
+    manager = ConnectionManager(
+        ad_config=ad_config,
+        username=username,
+        password=password,
+        max_retries=ad_config.max_retries,
+        initial_retry_delay=ad_config.initial_retry_delay,
+        max_retry_delay=ad_config.max_retry_delay,
+        health_check_interval=ad_config.health_check_interval,
+    )
 
-        if not ad_config.use_ssl:
-            print("INFO: Connected without SSL. Password operations will be disabled.")
+    if not ad_config.use_ssl:
+        logger.info("Connected without SSL. Password operations will be disabled.")
 
-        return manager
-    except Exception as e:
-        raise
+    return manager
 
 
 class SearchResultsPane(ListView):
@@ -221,6 +217,8 @@ class ADTUI(App):
         self.pending_delete_dn: Optional[str] = None
         self.pending_move_dn: Optional[str] = None
         self.pending_move_target: Optional[str] = None
+        self.pending_restore_dn: Optional[str] = None
+        self.pending_restore_label: Optional[str] = None
 
         # Set up connection state monitoring
         self.connection_manager.add_state_change_callback(
@@ -402,6 +400,9 @@ class ADTUI(App):
             self.notify("No object selected", severity="warning")
             return
 
+        # Store the DN to delete for confirmation callback
+        self.pending_delete_dn = self.current_selected_dn
+
         # Show confirmation dialog
         self.push_screen(
             ConfirmDeleteDialog(
@@ -558,6 +559,16 @@ class ADTUI(App):
                         self.show_path_autocomplete(path)
                         # Keep focus on search results so user can continue navigating
                         self.set_timer(0.05, lambda: self.search_results_pane.focus())
+                elif "[Deleted]" in str(item.text):
+                    # Deleted object from recycle bin: offer to restore
+                    self.pending_restore_dn = item.data
+                    self.pending_restore_label = item.text
+                    from ui.dialogs import ConfirmRestoreDialog
+
+                    self.push_screen(
+                        ConfirmRestoreDialog(item.text, item.data),
+                        self.handle_restore_confirmation,
+                    )
                 else:
                     # Search result: show details and expand tree
                     self.current_selected_dn = item.data
@@ -818,9 +829,6 @@ class ADTUI(App):
             "delete", {"dn": dn, "label": self.current_selected_label}
         )
 
-        # Get parent OU before deletion for refresh
-        parent_ou = self.path_service.get_parent_dn(dn) if self.path_service else None
-
         # Perform delete
         success, message = self.ldap_service.delete_object(dn)
 
@@ -832,8 +840,8 @@ class ADTUI(App):
             # Clear the details pane
             if hasattr(self, "details") and self.details:
                 self.details.update_content("No selection", None, None)
-            # Refresh the OU tree to reflect the deletion
-            self.action_refresh_ou()
+            # Remove the deleted node from tree and select next appropriate node
+            self.adtree.remove_node_by_dn(dn)
         else:
             self.notify(message, severity=Severity.ERROR.value)
 
@@ -921,6 +929,15 @@ class ADTUI(App):
             self.notify(message, severity=Severity.ERROR.value)
 
     # ==================== Restore Operations ====================
+
+    def handle_restore_confirmation(self, confirmed: bool):
+        """Handle restore confirmation result."""
+        if confirmed and self.pending_restore_dn:
+            self.restore_object(self.pending_restore_dn)
+            # Hide search results after restore
+            self.search_results_pane.styles.display = "none"
+        self.pending_restore_dn = None
+        self.pending_restore_label = None
 
     def restore_object(self, deleted_dn: str):
         """Restore a deleted object."""
@@ -1273,7 +1290,8 @@ class ADTUI(App):
                 ]
                 return "user" in obj_classes and "computer" not in obj_classes
             return False
-        except:
+        except Exception as e:
+            logger.debug("Error checking if object is user: %s", e)
             return False
 
     def refresh_current_view(self):
@@ -1298,9 +1316,9 @@ def main():
     # Validate configuration
     is_valid, issues = config_service.validate_config()
     if not is_valid:
-        print("Configuration errors:")
+        logger.error("Configuration errors:")
         for issue in issues:
-            print(f"  - {issue}")
+            logger.error("  - %s", issue)
         return
 
     # Main loop to allow restarting login on auth failure
@@ -1416,13 +1434,13 @@ def main():
                 if getattr(app, "auth_failed", False):
                     # Clear screen and show message before restarting login
                     os.system("cls" if os.name == "nt" else "clear")
-                    print("Authentication failed. Please try again.\n")
+                    logger.warning("Authentication failed. Please try again.")
                     continue
                 else:
                     # Normal exit - break the loop
                     break
             except Exception as e:
-                print(f"Error running application: {e}")
+                logger.error("Error running application: %s", e)
                 break
         else:
             # No credentials provided, exit

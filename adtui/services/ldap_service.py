@@ -1,15 +1,25 @@
 """LDAP Service - Handles all Active Directory operations."""
 
-from typing import List, Dict, Optional, Tuple
-from ldap3 import Connection, MODIFY_DELETE, MODIFY_REPLACE, MODIFY_ADD
-from datetime import datetime
-import sys
+import logging
 import os
+import sys
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple, Any
+
+from ldap3 import Connection, MODIFY_DELETE, MODIFY_REPLACE, MODIFY_ADD
 
 # Add parent directory to path to import constants
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from constants import ObjectIcon, ObjectType, SearchScope, LDAPControl
+from constants import (
+    ObjectIcon,
+    ObjectType,
+    SearchScope,
+    LDAPControl,
+    UserAccountControl,
+)
 from .connection_manager import ConnectionManager
+
+logger = logging.getLogger(__name__)
 
 
 class LDAPService:
@@ -210,7 +220,8 @@ class LDAPService:
                 return len(conn.entries) > 0
 
             return self.connection_manager.execute_with_retry(validate_op)
-        except:
+        except Exception as e:
+            logger.error("Error validating OU: %s", e)
             return False
 
     def search_ous(self, base_dn: str, prefix: str = "", limit: int = 50) -> List[Dict]:
@@ -334,6 +345,61 @@ class LDAPService:
         except Exception as e:
             raise Exception(f"Error searching for deleted object: {e}")
 
+    def search_deleted_objects(self, query: str) -> List[Dict]:
+        """Search for deleted objects in Recycle Bin matching a query.
+
+        Args:
+            query: Search string to match against CN
+
+        Returns:
+            List of matching deleted object dictionaries
+        """
+        try:
+
+            def search_deleted_op(conn: Connection):
+                deleted_objects_dn = f"CN=Deleted Objects,{self.base_dn}"
+
+                # Build search filter - search by CN with wildcard
+                search_filter = f"(&(isDeleted=TRUE)(cn=*{query}*))"
+
+                conn.search(
+                    deleted_objects_dn,
+                    search_filter,
+                    search_scope="SUBTREE",
+                    attributes=["cn", "objectClass", "whenChanged", "isDeleted"],
+                    controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)],
+                )
+
+                results = []
+                for entry in conn.entries:
+                    cn = str(entry.cn.value) if hasattr(entry, "cn") else "Unknown"
+                    obj_classes = (
+                        [str(cls).lower() for cls in entry.objectClass]
+                        if hasattr(entry, "objectClass")
+                        else []
+                    )
+                    when_deleted = (
+                        str(entry.whenChanged.value)
+                        if hasattr(entry, "whenChanged")
+                        else "Unknown"
+                    )
+
+                    icon = self._get_object_icon(obj_classes)
+
+                    results.append(
+                        {
+                            "label": f"{icon} [Deleted] {cn} ({when_deleted})",
+                            "dn": entry.entry_dn,
+                            "cn": cn,
+                        }
+                    )
+
+                return results
+
+            return self.connection_manager.execute_with_retry(search_deleted_op)
+        except Exception as e:
+            raise Exception(f"Error searching Recycle Bin: {e}")
+
     def restore_object(self, deleted_dn: str) -> Tuple[bool, str]:
         """Restore a deleted object from Recycle Bin.
 
@@ -346,22 +412,77 @@ class LDAPService:
         try:
 
             def restore_op(conn: Connection):
+                # First, get the lastKnownParent attribute to know where to restore
+                conn.search(
+                    deleted_dn,
+                    "(objectClass=*)",
+                    search_scope="BASE",
+                    attributes=["lastKnownParent", "cn", "name"],
+                    controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)],
+                )
+
+                if not conn.entries:
+                    return False, "Could not find deleted object"
+
+                entry = conn.entries[0]
+
+                # Get the original parent OU
+                last_known_parent = None
+                if hasattr(entry, "lastKnownParent") and entry.lastKnownParent.value:
+                    last_known_parent = str(entry.lastKnownParent.value)
+
+                if not last_known_parent:
+                    return (
+                        False,
+                        "Cannot determine original location. Use PowerShell: Restore-ADObject cmdlet.",
+                    )
+
+                # Get the CN (name) - need to remove the DEL: suffix
+                cn = None
+                if hasattr(entry, "cn") and entry.cn.value:
+                    cn = str(entry.cn.value)
+                    # Remove DEL:GUID suffix if present (format: "Name\nDEL:guid")
+                    if "\n" in cn:
+                        cn = cn.split("\n")[0]
+                    elif "\x0a" in cn:
+                        cn = cn.split("\x0a")[0]
+
+                if not cn:
+                    if hasattr(entry, "name") and entry.name.value:
+                        cn = str(entry.name.value)
+                        if "\n" in cn:
+                            cn = cn.split("\n")[0]
+                        elif "\x0a" in cn:
+                            cn = cn.split("\x0a")[0]
+
+                if not cn:
+                    return (
+                        False,
+                        "Cannot determine object name. Use PowerShell: Restore-ADObject cmdlet.",
+                    )
+
+                # Build the new DN for the restored object
+                new_dn = f"CN={cn},{last_known_parent}"
+
+                # Perform the restore by modifying isDeleted and moving the object
+                # Use the Show Deleted Objects control
                 result = conn.modify(
                     deleted_dn,
                     {
                         "isDeleted": [(MODIFY_DELETE, [])],
-                        "distinguishedName": [
-                            (MODIFY_REPLACE, [deleted_dn.replace("\\0ADEL:", "")])
-                        ],
+                        "distinguishedName": [(MODIFY_REPLACE, [new_dn])],
                     },
+                    controls=[(LDAPControl.SHOW_DELETED_OBJECTS, True, None)],
                 )
 
-                if result:
-                    return True, "Successfully restored object"
+                if result and conn.result["result"] == 0:
+                    return True, f"Successfully restored object to {last_known_parent}"
                 else:
+                    error_msg = conn.result.get("message", "Unknown error")
+                    error_desc = conn.result.get("description", "")
                     return (
                         False,
-                        "Restore failed. Use PowerShell: Restore-ADObject cmdlet for complex restores.",
+                        f"Restore failed: {error_desc} - {error_msg}. Use PowerShell: Restore-ADObject cmdlet.",
                     )
 
             return self.connection_manager.execute_with_retry(restore_op)
@@ -942,7 +1063,10 @@ class LDAPService:
                                 )
                                 if result:
                                     groups_to_add.append(group_dn)
-                            except:
+                            except Exception as e:
+                                logger.debug(
+                                    "Could not add user to group %s: %s", group_dn, e
+                                )
                                 continue  # Skip groups we can't add to
 
                         if groups_to_add:

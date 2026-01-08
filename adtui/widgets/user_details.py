@@ -1,25 +1,19 @@
-from typing import Tuple
-from textual.widgets import (
-    Static,
-    TabbedContent,
-    TabPane,
-    Static as StaticWidget,
-    Label,
-    Button,
-    Input,
-    ListView,
-    ListItem,
-)
-from textual.containers import ScrollableContainer, Vertical, Horizontal
-from textual.app import ComposeResult
-from datetime import datetime, timedelta
-from ldap3 import MODIFY_REPLACE, MODIFY_ADD, MODIFY_DELETE
-import sys
+"""User details pane widget for displaying AD user information."""
+
+import logging
 import os
+import sys
+from datetime import datetime, timedelta
+from typing import Optional, Tuple, Any
+
+from textual.widgets import Static
+from ldap3 import MODIFY_REPLACE, MODIFY_ADD, MODIFY_DELETE
 
 # Add parent directory to path to import constants
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from constants import PasswordPolicy
+from constants import PasswordPolicy, UserAccountControl
+
+logger = logging.getLogger(__name__)
 
 
 class UserDetailsPane(Static):
@@ -41,9 +35,9 @@ class UserDetailsPane(Static):
         self.load_user_details()
 
         if not self.entry:
-            print("DEBUG: No entry found after load_user_details")
+            logger.debug("No entry found after load_user_details for %s", user_dn)
 
-    def load_user_details(self):
+    def load_user_details(self) -> None:
         """Fetch user details from LDAP."""
 
         try:
@@ -86,14 +80,13 @@ class UserDetailsPane(Static):
                             for attr, values in self.entry.entry_attributes:
                                 self.raw_attributes[attr] = values
                     except Exception as e:
+                        logger.warning("Failed to convert entry_attributes: %s", e)
                         self.raw_attributes = {}
             else:
-                print("DEBUG: No entries found in search results")
+                logger.debug("No entries found in search results for %s", self.user_dn)
                 self.entry = None
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            logger.error("Error loading user details for %s: %s", self.user_dn, e)
 
             # Set entry to None but also store the error message for display
             self.entry = None
@@ -105,7 +98,7 @@ class UserDetailsPane(Static):
                 "Authentication failed" in error_msg
                 or "authentication" in error_msg.lower()
             ):
-                print("DEBUG: Re-raising authentication error for proper handling")
+                logger.debug("Re-raising authentication error for proper handling")
                 raise  # Re-raise to allow connection manager to handle it
 
     def refresh_display(self):
@@ -116,14 +109,14 @@ class UserDetailsPane(Static):
         # Build the display content
         return self._build_content()
 
-    def _build_content(self):
+    def _build_content(self) -> str:
         """Build the content string for display."""
 
         if not self.entry:
             if hasattr(self, "load_error") and self.load_error:
                 return f"[red]Error loading user details: {self.load_error}[/red]"
             else:
-                print("No entry found, returning 'No user data'")
+                logger.debug("No entry found, returning 'No user data'")
                 return "No user data"
 
         # General Information
@@ -284,17 +277,15 @@ class UserDetailsPane(Static):
                 ):
                     # No pwdLastSet attribute at all
                     if not password_never_expires:
-                        print(
-                            "DEBUG: No pwdLastSet attribute found, cannot calculate expiry"
+                        logger.debug(
+                            "No pwdLastSet attribute found, cannot calculate expiry"
                         )
                         pwd_expiry_info = "[yellow]Password expiry unknown (no last set date)[/yellow]"
             except Exception as e:
                 pwd_last_set_value = self.entry.pwdLastSet.value
                 pwd_last_set = str(pwd_last_set_value)
 
-                import traceback
-
-                traceback.print_exc()
+                logger.debug("Error parsing pwdLastSet: %s", e)
 
                 # Special handling for FILETIME strings that failed datetime parsing
                 if isinstance(pwd_last_set_value, str) and pwd_last_set_value.isdigit():
@@ -341,7 +332,9 @@ class UserDetailsPane(Static):
                                 else:
                                     pwd_expiry_info = f"[green]{days_until_expiry} days remaining[/green]"
                         elif filetime == 0:
-                            print("  → FILETIME 0 detected: must change at next logon")
+                            logger.debug(
+                                "FILETIME 0 detected: must change at next logon"
+                            )
                             pwd_last_set = "Must change at next logon"
                             if not password_never_expires:
                                 pwd_expiry_warning = (
@@ -383,8 +376,8 @@ class UserDetailsPane(Static):
                         account_expiry_warning = f"[yellow bold]⚠ Account expires in {days_until_account_expiry} days![/yellow bold]"
                     elif days_until_account_expiry <= 30:
                         account_expiry_warning = f"[yellow]⚠ Account expires in {days_until_account_expiry} days[/yellow]"
-            except:
-                pass
+            except Exception as e:
+                logger.debug("Error parsing accountExpires: %s", e)
 
         # Build the content with alerts
         alerts = ""
@@ -441,42 +434,81 @@ Password Last Set: {pwd_last_set}{" - " + pwd_expiry_info if pwd_expiry_info and
 
         return "\n".join(lines)
 
-    def modify_attribute(self, attribute, value):
+    def modify_attribute(self, attribute: str, value: Any) -> bool:
         """Modify a user attribute."""
         try:
-            self.conn.modify(self.user_dn, {attribute: [(MODIFY_REPLACE, [value])]})
-            if self.conn.result["result"] == 0:
+
+            def modify_attr_op(conn):
+                conn.modify(self.user_dn, {attribute: [(MODIFY_REPLACE, [value])]})
+                return conn.result
+
+            result = self.connection_manager.execute_with_retry(modify_attr_op)
+            if result["result"] == 0:
+                logger.info(
+                    "Successfully modified attribute %s for user %s",
+                    attribute,
+                    self.user_dn,
+                )
                 self.load_user_details()
                 return True
             else:
+                logger.warning(
+                    "Failed to modify attribute: %s",
+                    result.get("description", "Unknown error"),
+                )
                 return False
         except Exception as e:
+            logger.error("Error modifying attribute: %s", e)
             return False
 
-    def add_to_group(self, group_dn):
+    def add_to_group(self, group_dn: str) -> bool:
         """Add user to a group."""
         try:
-            self.conn.modify(group_dn, {"member": [(MODIFY_ADD, [self.user_dn])]})
-            if self.conn.result["result"] == 0:
-                print("Successfully joined group")
+
+            def add_to_group_op(conn):
+                conn.modify(group_dn, {"member": [(MODIFY_ADD, [self.user_dn])]})
+                return conn.result
+
+            result = self.connection_manager.execute_with_retry(add_to_group_op)
+            if result["result"] == 0:
+                logger.info(
+                    "Successfully added user %s to group %s", self.user_dn, group_dn
+                )
                 self.load_user_details()
                 return True
             else:
+                logger.warning(
+                    "Failed to add to group: %s",
+                    result.get("description", "Unknown error"),
+                )
                 return False
         except Exception as e:
+            logger.error("Error adding user to group: %s", e)
             return False
 
-    def remove_from_group(self, group_dn):
+    def remove_from_group(self, group_dn: str) -> bool:
         """Remove user from a group."""
         try:
-            self.conn.modify(group_dn, {"member": [(MODIFY_DELETE, [self.user_dn])]})
-            if self.conn.result["result"] == 0:
-                print("Successfully left group")
+
+            def remove_from_group_op(conn):
+                conn.modify(group_dn, {"member": [(MODIFY_DELETE, [self.user_dn])]})
+                return conn.result
+
+            result = self.connection_manager.execute_with_retry(remove_from_group_op)
+            if result["result"] == 0:
+                logger.info(
+                    "Successfully removed user %s from group %s", self.user_dn, group_dn
+                )
                 self.load_user_details()
                 return True
             else:
+                logger.warning(
+                    "Failed to remove from group: %s",
+                    result.get("description", "Unknown error"),
+                )
                 return False
         except Exception as e:
+            logger.error("Error removing user from group: %s", e)
             return False
 
     def unlock_account(self):
@@ -502,13 +534,22 @@ Password Last Set: {pwd_last_set}{" - " + pwd_expiry_info if pwd_expiry_info and
                 "badPwdCount": [(MODIFY_REPLACE, ["0"])],
             }
 
-            self.conn.modify(self.user_dn, changes)
+            def unlock_op(conn):
+                conn.modify(self.user_dn, changes)
+                return conn.result
 
-            if self.conn.result["result"] == 0:
+            result = self.connection_manager.execute_with_retry(unlock_op)
+
+            if result["result"] == 0:
+                logger.info("Account successfully unlocked: %s", self.user_dn)
                 return True, "Account successfully unlocked"
             else:
-                return False, f"Unlock failed: {self.conn.result['message']}"
+                logger.warning(
+                    "Unlock failed: %s", result.get("message", "Unknown error")
+                )
+                return False, f"Unlock failed: {result.get('message', 'Unknown error')}"
         except Exception as e:
+            logger.error("Error unlocking account: %s", e)
             return False, f"Error unlocking account: {e}"
 
     def is_account_locked(self) -> bool:

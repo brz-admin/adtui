@@ -1,5 +1,8 @@
 """Modal dialogs for ADTUI."""
 
+import logging
+from typing import Dict, Optional, Tuple, List, Any
+
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
@@ -13,12 +16,8 @@ from textual.widgets import (
     Checkbox,
     TextArea,
 )
-from typing import Dict
-import unicodedata
-from ldap3 import Connection
-import sys
-import subprocess
-import re
+
+logger = logging.getLogger(__name__)
 
 
 class BaseConfirmDialog(ModalScreen[bool]):
@@ -967,6 +966,18 @@ class ConfirmDisableDialog(BaseConfirmDialog):
             message=f"Are you sure you want to disable this account?\n\n{label}\n\nDN: {dn}\n\n[yellow]This will prevent user from logging in to system.[/yellow]",
             confirm_text="Disable",
             confirm_variant="error",
+        )
+
+
+class ConfirmRestoreDialog(BaseConfirmDialog):
+    """Dialog to confirm restoring a deleted object from Recycle Bin."""
+
+    def __init__(self, label: str, dn: str):
+        super().__init__(
+            title="[bold green]♻ Restore Object[/bold green]",
+            message=f"Are you sure you want to restore this deleted object?\n\n{label}\n\n[yellow]The object will be restored to its original location.[/yellow]",
+            confirm_text="Restore",
+            confirm_variant="success",
         )
 
 

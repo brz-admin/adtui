@@ -1,14 +1,18 @@
-# ad_tree.py
-from textual.widgets import Tree
-from ldap3 import Connection
-from functools import lru_cache
+"""AD Tree widget for displaying Active Directory hierarchy."""
+
+import logging
 import threading
-from typing import Optional
+from typing import Optional, Dict, Set, List, Any
+
+from ldap3 import Connection
+from textual.widgets import Tree
 
 try:
     from .services.connection_manager import ConnectionManager
 except ImportError:
     from services.connection_manager import ConnectionManager
+
+logger = logging.getLogger(__name__)
 
 
 class ADTree(Tree):
@@ -278,7 +282,7 @@ class ADTree(Tree):
             self.cursor_node.remove_children()
             self._populate_ou_fresh(self.cursor_node, ou_dn)
         else:
-            print("OU not loaded yet, expand it first to load it")
+            logger.debug("OU not loaded yet, expand it first to load it")
 
     def refresh_ou_by_dn(self, ou_dn: str):
         """Refresh a specific OU by finding its node in the tree."""
@@ -316,3 +320,47 @@ class ADTree(Tree):
                     return result
 
         return None
+
+    def remove_node_by_dn(self, dn: str) -> bool:
+        """Remove a node from the tree by its DN and select the next appropriate node.
+
+        Args:
+            dn: Distinguished Name of the node to remove
+
+        Returns:
+            True if node was found and removed, False otherwise
+        """
+        target_node = self._find_node_by_dn(self.root, dn)
+        if not target_node:
+            return False
+
+        parent = target_node.parent
+        if not parent:
+            return False
+
+        # Find sibling to select after removal
+        siblings = list(parent.children)
+        current_index = siblings.index(target_node) if target_node in siblings else -1
+
+        # Determine next node to select: prefer next sibling, then previous, then parent
+        next_node = None
+        if current_index >= 0:
+            if current_index < len(siblings) - 1:
+                # Select next sibling
+                next_node = siblings[current_index + 1]
+            elif current_index > 0:
+                # Select previous sibling
+                next_node = siblings[current_index - 1]
+            else:
+                # No siblings, select parent
+                next_node = parent
+
+        # Remove the node
+        target_node.remove()
+
+        # Select the next appropriate node
+        if next_node and next_node != self.root:
+            self.select_node(next_node)
+            self.scroll_to_node(next_node)
+
+        return True

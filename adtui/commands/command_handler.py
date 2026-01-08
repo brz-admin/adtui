@@ -1,14 +1,17 @@
 """Command handler for parsing and executing commands."""
 
-from typing import TYPE_CHECKING, Callable, Dict, Optional
-import sys
+import logging
 import os
+import sys
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from constants import MESSAGES, Severity
 
 if TYPE_CHECKING:
     from textual.app import App
+
+logger = logging.getLogger(__name__)
 
 
 class CommandHandler:
@@ -203,14 +206,33 @@ class CommandHandler:
             self.app.create_ou_in_parent(ou_name, self.app.current_selected_dn)
 
     def _handle_recycle(self, args: str) -> None:
-        """Handle recycle bin view command."""
+        """Handle recycle bin view command. Optional search query filters results."""
         try:
-            results = self.app.ldap_service.get_deleted_objects()
-            self.app.search_results_pane.populate(results, self.app.connection_manager)
-            self.app.notify(
-                f"Found {len(results)} deleted objects. Use :restore <name> to restore.",
-                severity=Severity.INFORMATION.value,
-            )
+            query = args.strip()
+            if query:
+                # Search deleted objects matching the query
+                results = self.app.ldap_service.search_deleted_objects(query)
+                self.app.search_results_pane.populate(
+                    results, self.app.connection_manager
+                )
+                self.app.search_results_pane.styles.display = "block"
+                self.app.search_results_pane.focus()
+                self.app.notify(
+                    f"Found {len(results)} deleted objects matching '{query}'. Use :restore <name> to restore.",
+                    severity=Severity.INFORMATION.value,
+                )
+            else:
+                # Show all deleted objects
+                results = self.app.ldap_service.get_deleted_objects()
+                self.app.search_results_pane.populate(
+                    results, self.app.connection_manager
+                )
+                self.app.search_results_pane.styles.display = "block"
+                self.app.search_results_pane.focus()
+                self.app.notify(
+                    f"Found {len(results)} deleted objects. Use :restore <name> to restore.",
+                    severity=Severity.INFORMATION.value,
+                )
         except Exception as e:
             self.app.notify(str(e), severity=Severity.ERROR.value)
 
@@ -253,7 +275,8 @@ class CommandHandler:
                 ]
                 return "user" in obj_classes and "computer" not in obj_classes
             return False
-        except:
+        except Exception as e:
+            logger.debug("Error checking if object is user: %s", e)
             return False
 
     def _handle_create_user(self, args: str) -> None:
@@ -524,7 +547,7 @@ class CommandHandler:
 :createou <name> - Same as :mkou
 
 [bold]Recovery & History:[/bold]
-:recycle, :rb    - Show AD Recycle Bin contents
+:recycle, :rb [query] - Show AD Recycle Bin contents (optional search query)
 :restore <name>  - Restore deleted object
 :undo, :u        - Undo last operation
 
