@@ -28,6 +28,11 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 prompt() { echo -en "${CYAN}$1${NC}"; }
 
+# Read from terminal even when piped
+read_input() {
+    read "$@" </dev/tty
+}
+
 # Detect OS
 detect_os() {
     OS="$(uname -s)"
@@ -156,7 +161,7 @@ setup_wizard() {
         echo "  $CONFIG_FILE"
         echo ""
         prompt "Do you want to reconfigure? [y/N]: "
-        read -r RECONFIGURE
+        read_input -r RECONFIGURE
         if [[ ! "$RECONFIGURE" =~ ^[Yy]$ ]]; then
             success "Keeping existing configuration"
             return
@@ -187,7 +192,7 @@ EOF
         
         # Domain name (short name like CORP, DOMMAN)
         prompt "Domain short name (e.g., CORP, DOMMAN): "
-        read -r DOMAIN_NAME
+        read_input -r DOMAIN_NAME
         DOMAIN_NAME=$(echo "$DOMAIN_NAME" | tr '[:lower:]' '[:upper:]')
         
         if [[ -z "$DOMAIN_NAME" ]]; then
@@ -198,7 +203,7 @@ EOF
         
         # Server
         prompt "AD Server hostname (e.g., dc1.domain.com): "
-        read -r AD_SERVER
+        read_input -r AD_SERVER
         
         if [[ -z "$AD_SERVER" ]]; then
             warn "Server cannot be empty"
@@ -224,7 +229,7 @@ EOF
         else
             prompt "Base DN (e.g., DC=domain,DC=com): "
         fi
-        read -r BASE_DN
+        read_input -r BASE_DN
         
         if [[ -z "$BASE_DN" ]]; then
             BASE_DN="$DEFAULT_BASE_DN"
@@ -238,7 +243,7 @@ EOF
         
         # SSL
         prompt "Use SSL/TLS? [y/N]: "
-        read -r USE_SSL
+        read_input -r USE_SSL
         if [[ "$USE_SSL" =~ ^[Yy]$ ]]; then
             USE_SSL="true"
         else
@@ -271,7 +276,7 @@ EOF
         # Ask for another AD
         echo ""
         prompt "Add another Active Directory? [y/N]: "
-        read -r ADD_ANOTHER
+        read_input -r ADD_ANOTHER
         if [[ ! "$ADD_ANOTHER" =~ ^[Yy]$ ]]; then
             break
         fi
