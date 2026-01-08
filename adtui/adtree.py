@@ -1,17 +1,14 @@
-"""AD Tree widget for displaying Active Directory hierarchy."""
-
-import logging
-import threading
-from typing import Optional, Dict, Set, List, Any
-
+# ad_tree.py
 from textual.widgets import Tree
+from ldap3 import Connection
+from functools import lru_cache
+import threading
+from typing import Optional
 
 try:
     from .services.connection_manager import ConnectionManager
 except ImportError:
     from services.connection_manager import ConnectionManager
-
-logger = logging.getLogger(__name__)
 
 
 class ADTree(Tree):
@@ -281,7 +278,7 @@ class ADTree(Tree):
             self.cursor_node.remove_children()
             self._populate_ou_fresh(self.cursor_node, ou_dn)
         else:
-            logger.debug("OU not loaded yet, expand it first to load it")
+            print("OU not loaded yet, expand it first to load it")
 
     def refresh_ou_by_dn(self, ou_dn: str):
         """Refresh a specific OU by finding its node in the tree."""

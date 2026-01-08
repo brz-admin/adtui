@@ -294,8 +294,8 @@ class ConnectionManager:
                 if self._connection:
                     try:
                         self._connection.unbind()
-                    except Exception:
-                        pass  # Ignore unbind errors during cleanup
+                    except:
+                        pass
                     self._connection = None
 
             # Attempt new connection
@@ -473,8 +473,8 @@ class ConnectionManager:
             if self._connection:
                 try:
                     self._connection.unbind()
-                except Exception:
-                    pass  # Ignore unbind errors during cleanup
+                except:
+                    pass
                 self._connection = None
 
         self._set_state(ConnectionState.DISCONNECTED)

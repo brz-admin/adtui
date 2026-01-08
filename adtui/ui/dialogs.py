@@ -1,8 +1,5 @@
 """Modal dialogs for ADTUI."""
 
-import logging
-from typing import Dict, Optional, Tuple, List, Any
-
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
@@ -16,8 +13,12 @@ from textual.widgets import (
     Checkbox,
     TextArea,
 )
-
-logger = logging.getLogger(__name__)
+from typing import Dict
+import unicodedata
+from ldap3 import Connection
+import sys
+import subprocess
+import re
 
 
 class BaseConfirmDialog(ModalScreen[bool]):
