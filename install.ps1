@@ -65,6 +65,11 @@ function Show-Help {
 function Test-PythonInstalled {
     Write-Info "Checking Python..."
 
+    # Refresh PATH from registry (in case Python was just installed)
+    $machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    $env:PATH = "$userPath;$machinePath"
+
     # Try python command first
     try {
         $pythonVersion = & python --version 2>&1
