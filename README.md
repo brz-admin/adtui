@@ -44,12 +44,12 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ### Linux/macOS
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brz-admin/adtui/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/brz-admin/adtui/refs/heads/main/install.sh | bash
 ```
 
 ### Windows (PowerShell)
 ```powershell
-Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)
+Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/refs/heads/main/install.ps1)
 ```
 
 ### Method 2: Python Package

@@ -175,7 +175,7 @@ function Restart-And-Continue {
     Write-Warn "Please restart your terminal and run this installer again."
     Write-Host ""
     Write-Host "After restarting, run:" -ForegroundColor Yellow
-    Write-Host "  Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)" -ForegroundColor Cyan
+    Write-Host "  Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/refs/heads/main/install.ps1)" -ForegroundColor Cyan
     exit 0
 }
 
