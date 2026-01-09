@@ -1354,8 +1354,9 @@ def run_setup_wizard() -> bool:
     """
     import os
     from pathlib import Path
+    from .services.platform_service import PlatformService
 
-    config_dir = Path.home() / ".config" / "adtui"
+    config_dir = PlatformService.get_config_dir()
     config_file = config_dir / "config.ini"
 
     print("\n" + "=" * 60)
@@ -1498,11 +1499,16 @@ def main():
     parser.parse_args()
 
     # Check if config exists, if not run wizard
+    from .services.platform_service import PlatformService
+
     config_paths = [
-        Path.home() / ".config" / "adtui" / "config.ini",
-        Path.home() / ".adtui_config.ini",
+        PlatformService.get_config_dir() / "config.ini",
         Path.cwd() / "config.ini",
     ]
+    # Add legacy Unix path only on non-Windows
+    legacy_path = PlatformService.get_legacy_config_path("config.ini")
+    if legacy_path:
+        config_paths.insert(1, legacy_path)
 
     config_exists = any(p.exists() for p in config_paths)
 

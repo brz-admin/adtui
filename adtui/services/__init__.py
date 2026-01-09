@@ -5,6 +5,7 @@ from .history_service import HistoryService, Operation
 from .path_service import PathService
 from .connection_manager import ConnectionManager, ConnectionState
 from .update_service import UpdateService, UpdateCheckResult
+from .platform_service import PlatformService
 
 __all__ = [
     'LDAPService',
@@ -15,4 +16,5 @@ __all__ = [
     'ConnectionState',
     'UpdateService',
     'UpdateCheckResult',
+    'PlatformService',
 ]

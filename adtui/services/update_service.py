@@ -22,10 +22,6 @@ REPO_URLS = [
     ("github.com", "brz-admin", "adtui"),
 ]
 
-# Install directory
-INSTALL_DIR = Path.home() / ".local" / "share" / "adtui"
-VENV_DIR = INSTALL_DIR / "venv"
-
 
 @dataclass
 class UpdateCheckResult:
@@ -45,7 +41,8 @@ class UpdateService:
         Args:
             cache_dir: Directory to store update check cache
         """
-        self.cache_dir = cache_dir or (Path.home() / ".config" / "adtui")
+        from .platform_service import PlatformService
+        self.cache_dir = cache_dir or PlatformService.get_config_dir()
         self.cache_file = self.cache_dir / "update_check.json"
         self._ensure_cache_dir()
 
@@ -222,15 +219,16 @@ class UpdateService:
         Returns:
             Tuple of (success, message)
         """
+        from .platform_service import PlatformService
+
+        venv_dir = PlatformService.get_venv_dir()
+
         # Check if installed in venv
-        if not VENV_DIR.exists():
+        if not venv_dir.exists():
             return False, "ADTUI venv not found. Update manually with: pip install --upgrade adtui"
 
-        pip_path = VENV_DIR / "bin" / "pip"
-        if not pip_path.exists():
-            pip_path = VENV_DIR / "Scripts" / "pip.exe"  # Windows
-
-        if not pip_path.exists():
+        pip_path = PlatformService.get_pip_path()
+        if not pip_path or not pip_path.exists():
             return False, "pip not found in venv"
 
         # Try updating from git repos

@@ -35,6 +35,8 @@ class ADConfig:
 
 def get_config_search_paths(config_file: str = "config.ini") -> List[str]:
     """Get list of configuration file search paths in priority order."""
+    from .platform_service import PlatformService
+
     # Environment variable override
     if os.getenv("ADTUI_CONFIG"):
         env_config = os.getenv("ADTUI_CONFIG")
@@ -42,14 +44,14 @@ def get_config_search_paths(config_file: str = "config.ini") -> List[str]:
             return [env_config]
 
     # User-specific config directory (preferred)
-    user_config_dir = Path.home() / ".config" / "adtui"
+    user_config_dir = PlatformService.get_config_dir()
     user_config = user_config_dir / config_file
     if user_config.exists():
         return [str(user_config)]
 
-    # Legacy home directory location
-    legacy_config = Path.home() / f".adtui_{config_file}"
-    if legacy_config.exists():
+    # Legacy home directory location (Unix only)
+    legacy_config = PlatformService.get_legacy_config_path(config_file)
+    if legacy_config and legacy_config.exists():
         return [str(legacy_config)]
 
     # Current working directory (backward compatibility)
