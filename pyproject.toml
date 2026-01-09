@@ -52,8 +52,9 @@ Repository = "https://git.brznet.fr/brz/adtui"
 [project.scripts]
 adtui = "adtui:main"
 
-[tool.setuptools]
-packages = ["adtui"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["adtui*"]
 
 [tool.setuptools.package-data]
 adtui = ["*.tcss", "*.ini.example"]
