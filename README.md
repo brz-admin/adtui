@@ -42,18 +42,14 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ## 🚀 Quick Install
 
-### Method 1: Universal One-Liner (Recommended)
+### Linux/macOS
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brz-admin/adtui/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/brz-admin/adtui/main/install.sh | bash
 ```
 
-**Alternative URLs (if above doesn't work due to network issues):**
-```bash
-# ServGitea (current working)
-curl -fsSL https://servgitea.domman.ad/ti2103/adtui/raw/branch/main/install.sh | sh
-
-# GitBrz (if accessible)
-curl -fsSL https://git.brznet.fr/Brz/adtui/raw/branch/main/install.sh | sh
+### Windows (PowerShell)
+```powershell
+Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)
 ```
 
 ### Method 2: Python Package
