@@ -104,7 +104,27 @@ function Test-PythonInstalled {
         }
     } catch {}
 
-    Write-Err "Python 3.8 or later is required but not found. Please install Python from https://python.org"
+    # Python not found, try to install via winget
+    Write-Warn "Python not found. Attempting to install via winget..."
+
+    try {
+        $wingetCheck = & winget --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Info "Installing Python 3.12 via winget..."
+            & winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Python installed successfully"
+                Write-Warn "Please restart your terminal and run this installer again."
+                Write-Host ""
+                Write-Host "After restarting, run:" -ForegroundColor Yellow
+                Write-Host "  Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)" -ForegroundColor Cyan
+                exit 0
+            }
+        }
+    } catch {}
+
+    Write-Err "Python 3.8+ is required. Install it manually from https://python.org or run: winget install Python.Python.3.12"
 }
 
 function Install-ADTUI {
