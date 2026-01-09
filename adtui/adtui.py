@@ -198,6 +198,9 @@ class ADTUI(App):
         # Auth failure flag - used to signal main() to restart login flow
         self.auth_failed = False
 
+        # Update check result (populated asynchronously)
+        self._update_result = None
+
     def _initialize_services(self):
         """Initialize services after connection is established."""
         # Initialize services
@@ -264,6 +267,34 @@ class ADTUI(App):
         self.set_timer(0.5, self._expand_tree_on_startup)
         # Also try to rebuild tree after a longer delay to ensure connection is ready
         self.set_timer(2.0, self._delayed_tree_rebuild)
+
+        # Check for updates in background
+        self._start_update_check()
+
+    def _start_update_check(self):
+        """Start background update check."""
+        try:
+            from .services.update_service import UpdateService
+
+            update_service = UpdateService()
+            update_service.check_for_update_async(self._on_update_check_complete)
+        except Exception as e:
+            logger.debug(f"Failed to start update check: {e}")
+
+    def _on_update_check_complete(self, result):
+        """Handle update check completion."""
+        self._update_result = result
+
+        if result.update_available:
+            def show_notification():
+                self.notify(
+                    f"Update available: {result.current_version} -> {result.latest_version}. "
+                    f"Use :update to upgrade.",
+                    severity="information",
+                    timeout=10,
+                )
+            # Use call_from_thread since this is from background thread
+            self.call_from_thread(show_notification)
 
     # ==================== Command Mode Actions ====================
 
@@ -1449,8 +1480,22 @@ def run_setup_wizard() -> bool:
 
 def main():
     """Main entry point for application."""
+    import argparse
     import os
     from pathlib import Path
+
+    from . import __version__
+
+    # Parse command-line arguments before starting Textual
+    parser = argparse.ArgumentParser(
+        description="ADTUI - Active Directory Terminal User Interface"
+    )
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"adtui {__version__}"
+    )
+    parser.parse_args()
 
     # Check if config exists, if not run wizard
     config_paths = [

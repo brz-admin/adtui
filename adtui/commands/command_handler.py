@@ -67,6 +67,10 @@ class CommandHandler:
             "q": self._handle_quit,
             "quit": self._handle_quit,
             "exit": self._handle_quit,
+            # Version and update commands
+            "version": self._handle_version,
+            "v": self._handle_version,
+            "update": self._handle_update,
         }
 
     def execute(self, command_str: str) -> None:
@@ -521,6 +525,112 @@ class CommandHandler:
                 severity=Severity.WARNING.value,
             )
 
+    def _handle_version(self, args: str) -> None:
+        """Handle version command."""
+        try:
+            from adtui import __version__
+            from adtui.services.update_service import UpdateService
+
+            update_service = UpdateService()
+            result = update_service.check_for_update(force=False)
+
+            if result.update_available:
+                self.app.notify(
+                    f"Current: {__version__}\n"
+                    f"Latest: {result.latest_version}\n"
+                    f"Use :update to upgrade",
+                    severity=Severity.INFORMATION.value,
+                    timeout=10,
+                )
+            else:
+                self.app.notify(
+                    f"ADTUI {__version__} (up to date)",
+                    severity=Severity.INFORMATION.value,
+                )
+        except Exception as e:
+            from adtui import __version__
+            self.app.notify(
+                f"ADTUI {__version__}",
+                severity=Severity.INFORMATION.value,
+            )
+
+    def _handle_update(self, args: str) -> None:
+        """Handle update command."""
+        try:
+            from adtui.services.update_service import UpdateService
+
+            update_service = UpdateService()
+            result = update_service.check_for_update(force=True)
+
+            if not result.update_available:
+                self.app.notify(
+                    f"Already running latest version ({result.current_version})",
+                    severity=Severity.INFORMATION.value,
+                )
+                return
+
+            # Show update confirmation dialog
+            from ui.dialogs import BaseConfirmDialog
+
+            self.app.push_screen(
+                BaseConfirmDialog(
+                    title="[bold cyan]Update Available[/bold cyan]",
+                    message=f"Current version: {result.current_version}\n"
+                            f"Latest version: {result.latest_version}\n\n"
+                            f"Update now? You will need to restart after updating.",
+                    confirm_text="Update",
+                    confirm_variant="success",
+                ),
+                self._handle_update_confirmation,
+            )
+        except Exception as e:
+            self.app.notify(
+                f"Error checking for updates: {e}",
+                severity=Severity.ERROR.value,
+            )
+
+    def _handle_update_confirmation(self, confirmed: bool) -> None:
+        """Handle update confirmation."""
+        if not confirmed:
+            self.app.notify("Update cancelled", severity=Severity.INFORMATION.value)
+            return
+
+        # Perform update in background
+        self.app.notify("Updating ADTUI... Please wait.", severity=Severity.INFORMATION.value)
+
+        def do_update():
+            try:
+                from adtui.services.update_service import UpdateService
+                update_service = UpdateService()
+                success, message = update_service.perform_update()
+
+                def show_result():
+                    if success:
+                        self.app.notify(
+                            f"{message}\n\nPlease restart ADTUI to use the new version.",
+                            severity=Severity.INFORMATION.value,
+                            timeout=15,
+                        )
+                    else:
+                        self.app.notify(
+                            f"Update failed: {message}",
+                            severity=Severity.ERROR.value,
+                            timeout=10,
+                        )
+
+                self.app.call_from_thread(show_result)
+            except Exception as e:
+                def show_error():
+                    self.app.notify(
+                        f"Update error: {e}",
+                        severity=Severity.ERROR.value,
+                    )
+                self.app.call_from_thread(show_error)
+
+        import threading
+        thread = threading.Thread(target=do_update, daemon=True)
+        thread.start()
+
     def _handle_help(self, args: str) -> None:
         """Handle help command."""
         help_text = """[bold cyan]Available Commands:[/bold cyan]
@@ -550,6 +660,10 @@ class CommandHandler:
 :recycle, :rb [query] - Show AD Recycle Bin contents (optional search query)
 :restore <name>  - Restore deleted object
 :undo, :u        - Undo last operation
+
+[bold]Version & Updates:[/bold]
+:version, :v     - Show version and check for updates
+:update          - Update to latest version
 
 [bold]Other:[/bold]
 :help            - Show this help message
