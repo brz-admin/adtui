@@ -111,8 +111,8 @@ function Test-PythonInstalled {
     try {
         $wingetCheck = & winget --version 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Info "Installing Python 3.12 via winget..."
-            & winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+            Write-Info "Installing Python 3.14 via winget..."
+            & winget install Python.Python.3.14 --silent --accept-package-agreements --accept-source-agreements
 
             if ($LASTEXITCODE -eq 0) {
                 Write-Success "Python installed via winget"
@@ -123,7 +123,7 @@ function Test-PythonInstalled {
 
     # Fallback: download from python.org
     Write-Info "Downloading Python from python.org..."
-    $pythonUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+    $pythonUrl = "https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe"
     $installerPath = "$env:TEMP\python-installer.exe"
 
     try {
