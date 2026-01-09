@@ -104,9 +104,10 @@ function Test-PythonInstalled {
         }
     } catch {}
 
-    # Python not found, try to install via winget
-    Write-Warn "Python not found. Attempting to install via winget..."
+    # Python not found, try to install
+    Write-Warn "Python not found. Attempting to install..."
 
+    # Try winget first
     try {
         $wingetCheck = & winget --version 2>&1
         if ($LASTEXITCODE -eq 0) {
@@ -114,17 +115,38 @@ function Test-PythonInstalled {
             & winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
 
             if ($LASTEXITCODE -eq 0) {
-                Write-Success "Python installed successfully"
-                Write-Warn "Please restart your terminal and run this installer again."
-                Write-Host ""
-                Write-Host "After restarting, run:" -ForegroundColor Yellow
-                Write-Host "  Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)" -ForegroundColor Cyan
-                exit 0
+                Write-Success "Python installed via winget"
+                Restart-And-Continue
             }
         }
     } catch {}
 
-    Write-Err "Python 3.8+ is required. Install it manually from https://python.org or run: winget install Python.Python.3.12"
+    # Fallback: download from python.org
+    Write-Info "Downloading Python from python.org..."
+    $pythonUrl = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+    $installerPath = "$env:TEMP\python-installer.exe"
+
+    try {
+        Invoke-WebRequest -Uri $pythonUrl -OutFile $installerPath -UseBasicParsing
+
+        Write-Info "Installing Python (this may take a minute)..."
+        Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
+
+        Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+
+        Write-Success "Python installed successfully"
+        Restart-And-Continue
+    } catch {
+        Write-Err "Failed to install Python. Please install manually from https://python.org"
+    }
+}
+
+function Restart-And-Continue {
+    Write-Warn "Please restart your terminal and run this installer again."
+    Write-Host ""
+    Write-Host "After restarting, run:" -ForegroundColor Yellow
+    Write-Host "  Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/brz-admin/adtui/main/install.ps1)" -ForegroundColor Cyan
+    exit 0
 }
 
 function Install-ADTUI {
