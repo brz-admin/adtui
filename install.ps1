@@ -70,7 +70,32 @@ function Test-PythonInstalled {
     $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
     $env:PATH = "$userPath;$machinePath"
 
-    # Try python command first
+    # Check common Python install locations directly
+    $commonPaths = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+        "$env:ProgramFiles\Python314\python.exe",
+        "$env:ProgramFiles\Python313\python.exe",
+        "$env:ProgramFiles\Python312\python.exe",
+        "C:\Python314\python.exe",
+        "C:\Python313\python.exe",
+        "C:\Python312\python.exe"
+    )
+
+    foreach ($pythonPath in $commonPaths) {
+        if (Test-Path $pythonPath) {
+            try {
+                $pythonVersion = & $pythonPath --version 2>&1
+                if ($pythonVersion -match "Python (\d+)\.(\d+)") {
+                    Write-Success "Found $pythonVersion at $pythonPath"
+                    return $pythonPath
+                }
+            } catch {}
+        }
+    }
+
+    # Try python command from PATH
     try {
         $pythonVersion = & python --version 2>&1
         if ($pythonVersion -match "Python (\d+)\.(\d+)") {
@@ -169,6 +194,9 @@ function Install-ADTUI {
     # Create venv
     if ($PythonCmd -eq "py") {
         & py -3 -m venv $VENV_DIR
+    } elseif ($PythonCmd -like "*.exe") {
+        # Full path to python.exe
+        & $PythonCmd -m venv $VENV_DIR
     } else {
         & $PythonCmd -m venv $VENV_DIR
     }
