@@ -5,6 +5,8 @@ from typing import Dict, Optional, Tuple, List, Any
 
 from ldap3 import Connection
 
+from .. import __version__
+
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
@@ -1452,11 +1454,11 @@ class LoginDialog(ModalScreen):
         self.ad_config = ad_config
 
     def compose(self) -> ComposeResult:
-        ascii_art = """[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
+        ascii_art = f"""[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
 [bold palegreen]  dPYb   8   8      8   8    8  8  [/bold palegreen]
 [bold palegreen] dPwwYb  8   8      8   8b..d8  8  [/bold palegreen]
 [bold palegreen]dP    Yb 888P'      8   `Y88P' 888 [/bold palegreen]
-                                   """
+                            [dim]v{__version__}[/dim]"""
         yield Horizontal(
             Vertical(
                 Static(
