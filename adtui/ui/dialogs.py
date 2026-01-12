@@ -5,7 +5,13 @@ from typing import Dict, Optional, Tuple, List, Any
 
 from ldap3 import Connection
 
-from .. import __version__
+try:
+    from adtui import __version__
+except ImportError:
+    try:
+        from .. import __version__
+    except ImportError:
+        __version__ = "unknown"
 
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
