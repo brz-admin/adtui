@@ -1334,11 +1334,11 @@ class ADSelectionDialog(ModalScreen[str]):
         self.domain_data = {}
 
     def compose(self) -> ComposeResult:
-        ascii_art = """[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
+        ascii_art = f"""[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
 [bold palegreen]  dPYb   8   8      8   8    8  8  [/bold palegreen]
 [bold palegreen] dPwwYb  8   8      8   8b..d8  8  [/bold palegreen]
 [bold palegreen]dP    Yb 888P'      8   `Y88P' 888 [/bold palegreen]
-                                   """
+                            [dim]v{__version__}[/dim]"""
 
         yield Vertical(
             Static(ascii_art, id="ascii-art"),

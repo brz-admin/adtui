@@ -1571,9 +1571,10 @@ def main():
             """
 
             def compose(self) -> ComposeResult:
-                ascii_art = """[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
-[blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]  
-[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]"""
+                ascii_art = f"""[bold cyan]┏━┃┏━   ━┏┛┃ ┃┛[/bold cyan]
+[blue]  ┏━┃┃ ┃   ┃ ┃ ┃┃[/blue]
+[dark_blue]┛ ┛━━    ┛ ━━┛┛[/dark_blue]
+              [dim]v{__version__}[/dim]"""
 
                 yield Static(
                     f"{ascii_art}\n\n[bold cyan]Active Directory TUI[/bold cyan]\n"
