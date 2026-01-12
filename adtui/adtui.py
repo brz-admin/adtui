@@ -38,7 +38,7 @@ except ImportError:
     from services.config_service import ConfigService, ADConfig
     from services.connection_manager import ConnectionManager, ConnectionState
     from commands import CommandHandler
-    from ui.dialogs import (
+    from .ui.dialogs import (
         ConfirmDeleteDialog,
         ConfirmMoveDialog,
         ConfirmRestoreDialog,
@@ -360,7 +360,7 @@ class ADTUI(App):
         if not self.current_selected_dn:
             self.notify("No object selected", severity="warning")
             return
-        from ui.dialogs import EditAttributesDialog
+        from .ui.dialogs import EditAttributesDialog
 
         self.push_screen(
             EditAttributesDialog(self.current_selected_dn, self.connection_manager)
@@ -374,7 +374,7 @@ class ADTUI(App):
 
         # Determine object type
         if self.current_selected_label and "👤" in str(self.current_selected_label):
-            from ui.dialogs import ManageGroupsDialog
+            from .ui.dialogs import ManageGroupsDialog
 
             # Need to load user details first
             from widgets.user_details import UserDetailsPane
@@ -392,7 +392,7 @@ class ADTUI(App):
                 )
             )
         elif self.current_selected_label and "👥" in str(self.current_selected_label):
-            from ui.dialogs import ManageGroupMembersDialog
+            from .ui.dialogs import ManageGroupMembersDialog
             from widgets.group_details import GroupDetailsPane
 
             group_details = GroupDetailsPane()
@@ -417,7 +417,7 @@ class ADTUI(App):
             return
 
         if self.current_selected_label and "👤" in str(self.current_selected_label):
-            from ui.dialogs import SetPasswordDialog
+            from .ui.dialogs import SetPasswordDialog
 
             self.push_screen(
                 SetPasswordDialog(self.current_selected_dn, self.connection_manager)
@@ -604,7 +604,7 @@ class ADTUI(App):
                     # Deleted object from recycle bin: offer to restore
                     self.pending_restore_dn = item.data
                     self.pending_restore_label = item.text
-                    from ui.dialogs import ConfirmRestoreDialog
+                    from .ui.dialogs import ConfirmRestoreDialog
 
                     self.push_screen(
                         ConfirmRestoreDialog(item.text, item.data),
@@ -1160,7 +1160,7 @@ class ADTUI(App):
 
     def action_create_user(self):
         """Create new user account."""
-        from ui.dialogs import CreateUserDialog
+        from .ui.dialogs import CreateUserDialog
 
         # Use current selected OU or base DN
         target_ou = self._get_current_ou()
@@ -1174,7 +1174,7 @@ class ADTUI(App):
 
     def action_copy_user(self):
         """Copy existing user account."""
-        from ui.dialogs import CopyUserDialog
+        from .ui.dialogs import CopyUserDialog
 
         if not self.current_selected_dn:
             self.notify("No user selected to copy", severity=Severity.WARNING.value)
