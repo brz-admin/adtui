@@ -3,6 +3,8 @@
 import logging
 from typing import Dict, Optional, Tuple, List, Any
 
+from ldap3 import Connection
+
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal, ScrollableContainer
