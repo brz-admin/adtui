@@ -1052,16 +1052,20 @@ class LDAPService:
                             # Try to add user to each group
                             try:
 
-                                def add_to_group_op(conn: Connection):
-                                    return conn.modify(
-                                        group_dn,
-                                        {"member": [(MODIFY_ADD, [new_user_dn])]},
-                                    )
+                                def make_add_op(gdn, udn):
+                                    def add_to_group_op(conn: Connection):
+                                        conn.modify(
+                                            gdn,
+                                            {"member": [(MODIFY_ADD, [udn])]},
+                                        )
+                                        return conn.result
+
+                                    return add_to_group_op
 
                                 result = self.connection_manager.execute_with_retry(
-                                    add_to_group_op
+                                    make_add_op(group_dn, new_user_dn)
                                 )
-                                if result:
+                                if result and result.get("result") == 0:
                                     groups_to_add.append(group_dn)
                             except Exception as e:
                                 logger.debug(
