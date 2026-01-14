@@ -47,22 +47,43 @@ class CommandHandler:
             "recycle": self._handle_recycle,
             "rb": self._handle_recycle,
             "restore": self._handle_restore,
-            # History commands
+            "rs": self._handle_restore,
             # User management commands
             "unlock": self._handle_unlock,
+            "ul": self._handle_unlock,
             "enable": self._handle_enable,
             "en": self._handle_enable,
             "disable": self._handle_disable,
             "dis": self._handle_disable,
-            #  commands
+            # Tree commands
             "-tree": self._handle__tree,
+            "tree": self._handle__tree,
+            "rebuild": self._handle__tree,
+            # User creation commands
             "createuser": self._handle_create_user,
             "cu": self._handle_create_user,
             "copyuser": self._handle_copy_user,
+            "cp": self._handle_copy_user,
+            # Undo commands
             "undo": self._handle_undo,
             "u": self._handle_undo,
+            # Refresh commands
+            "refresh": self._handle_refresh,
+            "r": self._handle_refresh,
+            # Attributes commands
+            "attributes": self._handle_attributes,
+            "attr": self._handle_attributes,
+            "a": self._handle_attributes,
+            # Groups commands
+            "groups": self._handle_groups,
+            "g": self._handle_groups,
+            # Password commands
+            "password": self._handle_password,
+            "passwd": self._handle_password,
+            "p": self._handle_password,
             # Help command
             "help": self._handle_help,
+            "h": self._handle_help,
             # Quit command
             "q": self._handle_quit,
             "quit": self._handle_quit,
@@ -525,6 +546,37 @@ class CommandHandler:
                 severity=Severity.WARNING.value,
             )
 
+    def _handle_refresh(self, args: str) -> None:
+        """Handle refresh command."""
+        self.app.action_refresh_ou()
+
+    def _handle_attributes(self, args: str) -> None:
+        """Handle attributes command."""
+        if not self.app.current_selected_dn:
+            self.app.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+        self.app.action_edit_attributes()
+
+    def _handle_groups(self, args: str) -> None:
+        """Handle groups command."""
+        if not self.app.current_selected_dn:
+            self.app.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+        self.app.action_manage_groups()
+
+    def _handle_password(self, args: str) -> None:
+        """Handle password command."""
+        if not self.app.current_selected_dn:
+            self.app.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+        if not self._is_user_object(self.app.current_selected_dn):
+            self.app.notify(
+                "Password can only be set for user accounts",
+                severity=Severity.WARNING.value,
+            )
+            return
+        self.app.action_set_password()
+
     def _handle_version(self, args: str) -> None:
         """Handle version command."""
         try:
@@ -637,45 +689,43 @@ class CommandHandler:
 
 [bold]Search & Navigation:[/bold]
 /<query>         - Search (vim-style)
-:s <query>       - Search for objects by cn or sAMAccountName
+:s <query>       - Search for objects
+:r, :refresh     - Refresh current OU
 
 [bold]Object Management:[/bold]
-/del         - Delete currently selected object
+:d, :del         - Delete selected object
 :m <path>        - Move to path with autocomplete
-:move <path>     - Same as :m
-:unlock          - Unlock currently selected locked user account
-:enable          - Enable currently selected disabled user account
-:en              - Same as :enable
-:disable         - Disable currently selected enabled user account
-:dis             - Same as :disable
-:createuser [ou] - Create new user account (uses current OU if not specified)
-:cu [ou]         - Same as :createuser
-:copyuser [source] [ou] - Copy user account (uses current selection if not specified)
+:a, :attr        - View/edit attributes
+:g, :groups      - Manage group memberships
+:p, :passwd      - Set password
+
+[bold]User Management:[/bold]
+:ul, :unlock     - Unlock locked user account
+:en, :enable     - Enable disabled user account
+:dis, :disable   - Disable enabled user account
+:cu, :createuser - Create new user account
+:cp, :copyuser   - Copy user account
 
 [bold]OU Management:[/bold]
-:mkou <name>     - Create new OU with name in current location
-:createou <name> - Same as :mkou
+:mkou, :createou - Create new OU
+:tree, :rebuild  - Rebuild AD tree
 
 [bold]Recovery & History:[/bold]
-:recycle, :rb [query] - Show AD Recycle Bin contents (optional search query)
-:restore <name>  - Restore deleted object
-:undo, :u        - Undo last operation
-
-[bold]Version & Updates:[/bold]
-:version, :v     - Show version and check for updates
-:update          - Update to latest version
+:rb, :recycle    - Show AD Recycle Bin
+:rs, :restore    - Restore deleted object
+:u, :undo        - Undo last operation
 
 [bold]Other:[/bold]
-:help            - Show this help message
-:q, :quit, :exit - Quit application
+:h, :help        - Show this help
+:v, :version     - Show version
+:update          - Update to latest
+:q, :quit        - Quit application
 
-[bold]Move with Autocomplete:[/bold]
-Type :m and start typing a path:
-  :m User[autocomplete shows suggestions]
-  :m Users/[shows subdirectories]
-
-Full LDAP DN also works:
-  :m ou=IT,ou=Users,dc=example,dc=com
+[bold]Keyboard Shortcuts:[/bold]
+r - Refresh    c - Create user    C - Copy user
+a - Attributes g - Groups         p - Password
+d - Delete     y - Copy DN        u - Undo
+U - Unlock     ? - Help           / - Search
 """
         self.app.notify(help_text, timeout=15)
 

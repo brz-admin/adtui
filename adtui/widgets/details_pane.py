@@ -3,17 +3,21 @@
 import logging
 from typing import Optional, Any
 
-from textual.widgets import Static
 from textual.binding import Binding
 
 from .group_details import GroupDetailsPane
 from .user_details import UserDetailsPane
+from .selectable_static import SelectableStatic
 
 logger = logging.getLogger(__name__)
 
 
-class DetailsPane(Static):
-    """Main details pane that switches between different object types."""
+class DetailsPane(SelectableStatic):
+    """Main details pane that switches between different object types.
+
+    Inherits from SelectableStatic to enable mouse text selection
+    with automatic clipboard copy.
+    """
 
     DEFAULT_CSS = """
     DetailsPane {

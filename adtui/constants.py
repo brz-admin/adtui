@@ -102,6 +102,32 @@ COMMAND_ALIASES = {
     "en": "enable",
     # Disable commands
     "dis": "disable",
+    # Refresh commands
+    "r": "refresh",
+    # Copy user commands
+    "cp": "copyuser",
+    # Attributes commands
+    "a": "attributes",
+    "attr": "attributes",
+    # Groups commands
+    "g": "groups",
+    # Password commands
+    "p": "password",
+    "passwd": "password",
+    # Unlock commands
+    "ul": "unlock",
+    # Restore commands
+    "rs": "restore",
+    # Help commands
+    "h": "help",
+    # Tree rebuild commands
+    "tree": "-tree",
+    "rebuild": "-tree",
+    # Version commands
+    "v": "version",
+    # Quit commands
+    "q": "quit",
+    "exit": "quit",
 }
 
 

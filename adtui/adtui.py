@@ -141,6 +141,9 @@ class ADTUI(App):
         Binding("y", "copy_to_clipboard", "Copy Text", show=True),
         Binding("ctrl+c", "copy_selection", "Copy Selection", show=True),
         Binding("d", "delete_object", "Delete", show=False),
+        Binding("u", "undo", "Undo", show=False),
+        Binding("U", "unlock_user", "Unlock", show=False),
+        Binding("?", "show_help", "Help", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
         Binding("tab", "cycle_focus", "Cycle Focus", show=False),
     ]
@@ -442,6 +445,21 @@ class ADTUI(App):
             ),
             self.handle_delete_confirmation,
         )
+
+    def action_undo(self):
+        """Undo last operation."""
+        if self.command_handler:
+            self.command_handler.execute(":undo")
+
+    def action_unlock_user(self):
+        """Unlock selected user account."""
+        if self.command_handler:
+            self.command_handler.execute(":unlock")
+
+    def action_show_help(self):
+        """Show help."""
+        if self.command_handler:
+            self.command_handler.execute(":help")
 
     def _set_input_prefix(self, prefix: str):
         """Set the input prefix and move cursor to end."""
