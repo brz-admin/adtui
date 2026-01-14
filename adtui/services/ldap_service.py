@@ -871,24 +871,24 @@ class LDAPService:
             # Generate user DN
             user_dn = f"cn={full_name},{ou_dn}"
 
-            # Calculate userAccountControl flags
-            uac = 0x200  # NORMAL_ACCOUNT
+            # Calculate final userAccountControl flags (applied after password is set)
+            final_uac = 0x200  # NORMAL_ACCOUNT
             if account_disabled:
-                uac |= 0x2  # ACCOUNTDISABLE
+                final_uac |= 0x2  # ACCOUNTDISABLE
             if user_cannot_change_password:
-                uac |= 0x40  # PASSWD_CANT_CHANGE
+                final_uac |= 0x40  # PASSWD_CANT_CHANGE
             if password_never_expires:
-                uac |= 0x10000  # DONT_EXPIRE_PASSWORD
-            if user_must_change_password:
-                uac |= 0x200  # NORMAL_ACCOUNT (already set)
+                final_uac |= 0x10000  # DONT_EXPIRE_PASSWORD
 
-            # Prepare attributes
+            # Initial UAC: create disabled first, then set password, then enable
+            initial_uac = 0x200 | 0x2  # NORMAL_ACCOUNT + ACCOUNTDISABLE
+
+            # Prepare attributes (without password - set separately via modify_password)
             attributes = {
                 "objectClass": ["top", "person", "organizationalPerson", "user"],
                 "cn": full_name,
                 "sAMAccountName": samaccount,
-                "userAccountControl": str(uac),
-                "unicodePwd": f'"{password}"'.encode("utf-16-le"),
+                "userAccountControl": str(initial_uac),
                 "userPrincipalName": f"{samaccount}@{self.domain}",
             }
 
@@ -916,14 +916,27 @@ class LDAPService:
                     )
 
             def create_user_op(conn: Connection):
-                # Create the user
+                # Step 1: Create the user (disabled, no password yet)
                 result = conn.add(user_dn, attributes=attributes)
 
                 if not result:
                     error_msg = conn.result.get("message", "Unknown error")
                     return False, f"Failed to create user: {error_msg}", ""
 
-                # If user must change password at next logon, set pwdLastSet to 0
+                # Step 2: Set password using Microsoft extension (proper AD method)
+                pwd_result = conn.extend.microsoft.modify_password(user_dn, password)
+                if not pwd_result:
+                    # Try to clean up the created user
+                    conn.delete(user_dn)
+                    error_msg = conn.result.get("message", "Unknown error")
+                    return False, f"Failed to set password: {error_msg}", ""
+
+                # Step 3: Apply final UAC (enable account if not disabled)
+                conn.modify(
+                    user_dn, {"userAccountControl": [(MODIFY_REPLACE, [str(final_uac)])]}
+                )
+
+                # Step 4: If user must change password at next logon, set pwdLastSet to 0
                 if user_must_change_password:
                     conn.modify(user_dn, {"pwdLastSet": [(MODIFY_REPLACE, ["0"])]})
 
