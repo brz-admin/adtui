@@ -2,7 +2,7 @@
 
 A powerful Terminal User Interface (TUI) for managing Active Directory, built with Python and Textual.
 
-**Current Version: 2.1.0**
+**Current Version: 2.4.1**
 
 ## Features
 
@@ -73,7 +73,41 @@ chmod +x adtui
 docker run -it --rm adtui:latest
 ```
 
-### Method 5: From Source (Development)
+### Method 5: Web Server (Browser Access)
+
+Run ADTUI as a web service accessible from any browser:
+
+```bash
+# Install with serve dependencies
+pip install adtui[serve]
+
+# Run the web server
+textual serve --host 0.0.0.0 --port 8000 --url "http://YOUR_SERVER:8000" "python -m adtui.serve"
+```
+
+Or use Docker:
+
+```bash
+# Build the web server image
+docker build -f Dockerfile.serve -t adtui-web .
+
+# Run with your config
+docker run -p 8000:8000 \
+  -v /path/to/config.ini:/home/adtui/config.ini:ro \
+  -e PUBLIC_URL=http://YOUR_SERVER:8000 \
+  adtui-web
+```
+
+Or use docker-compose:
+
+```bash
+# Edit docker-compose.yml to set PUBLIC_URL
+docker-compose up adtui-web
+```
+
+Then access via browser at `http://YOUR_SERVER:8000`
+
+### Method 6: From Source (Development)
 ```bash
 git clone https://github.com/brz-admin/adtui.git
 cd adtui
@@ -131,6 +165,18 @@ adtui
 ```
 
 You'll be prompted for your AD username and password (credentials are NEVER stored).
+
+The app auto-updates on startup by default. Use `--no-auto-update` to skip this.
+
+### Command Line Options
+
+```bash
+adtui --help              # Show help
+adtui --version           # Show version
+adtui --update            # Update to latest version and exit
+adtui --check-update      # Check for updates without installing
+adtui --no-auto-update    # Launch without auto-updating
+```
 
 ### Commands
 
@@ -388,7 +434,16 @@ MIT License - see LICENSE file for details
 
 ## Changelog
 
-### Version 2.0.0 (Current)
+### Version 2.4.1 (Current)
+- ✨ New: Web server support via `textual serve` for browser-based access
+- ✨ New: Auto-update on startup (disable with `--no-auto-update`)
+- ✨ New: `--update` flag to update without launching the app
+- ✨ New: Show built-in containers (Users, Computers, Builtin) in tree
+- ✨ New: Dockerfile.serve and docker-compose web service
+- 🔧 Fixed: Password expiry calculation for datetime objects
+- 🔧 Fixed: 'y' key now copies selected text instead of always copying DN
+
+### Version 2.0.0
 
 - 🎉 Complete refactoring with clean architecture
 - ✨ New: Path autocomplete for move operations

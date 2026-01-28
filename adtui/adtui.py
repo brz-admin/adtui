@@ -1506,6 +1506,52 @@ def run_setup_wizard() -> bool:
         return False
 
 
+def _run_update(check_only: bool = False, quiet: bool = False) -> bool:
+    """Run update check and optionally perform update.
+
+    Args:
+        check_only: If True, only check for updates without installing
+        quiet: If True, suppress output unless update is available
+
+    Returns:
+        True if update was performed successfully or no update needed
+    """
+    from .services.update_service import UpdateService
+
+    update_service = UpdateService()
+
+    if not quiet:
+        print("Checking for updates...")
+
+    result = update_service.check_for_update(force=True)
+
+    if result.error:
+        if not quiet:
+            print(f"Error checking for updates: {result.error}")
+        return False
+
+    if not result.update_available:
+        if not quiet:
+            print(f"ADTUI {result.current_version} is up to date.")
+        return True
+
+    print(f"Update available: {result.current_version} -> {result.latest_version}")
+
+    if check_only:
+        return True
+
+    print("Installing update...")
+    success, message = update_service.perform_update()
+
+    if success:
+        print(f"Update successful: {message}")
+        print("Please restart ADTUI to use the new version.")
+    else:
+        print(f"Update failed: {message}")
+
+    return success
+
+
 def main():
     """Main entry point for application."""
     import argparse
@@ -1523,7 +1569,54 @@ def main():
         action="version",
         version=f"adtui {__version__}"
     )
-    parser.parse_args()
+    parser.add_argument(
+        "--update", "-u",
+        action="store_true",
+        help="Check for updates and install if available, then exit"
+    )
+    parser.add_argument(
+        "--check-update",
+        action="store_true",
+        help="Check for updates without installing, then exit"
+    )
+    parser.add_argument(
+        "--no-auto-update",
+        action="store_true",
+        help="Skip automatic update check and installation at startup"
+    )
+    args = parser.parse_args()
+
+    # Handle update flags
+    if args.update:
+        _run_update(check_only=False)
+        return
+
+    if args.check_update:
+        _run_update(check_only=True)
+        return
+
+    # Auto-update before launching (default behavior)
+    if not args.no_auto_update:
+        try:
+            from .services.update_service import UpdateService
+            update_service = UpdateService()
+            result = update_service.check_for_update()
+
+            if result.update_available:
+                print(f"Update available: {result.current_version} -> {result.latest_version}")
+                print("Installing update...")
+
+                success, message = update_service.perform_update()
+                if success:
+                    print(f"Update successful: {message}")
+                    print("Please restart ADTUI to use the new version.")
+                    return
+                else:
+                    print(f"Auto-update failed: {message}")
+                    print("Continuing with current version...\n")
+        except Exception as e:
+            # Silently continue if update check fails
+            pass
 
     # Check if config exists, if not run wizard
     from .services.platform_service import PlatformService
