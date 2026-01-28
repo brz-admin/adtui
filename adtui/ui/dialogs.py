@@ -473,6 +473,29 @@ class ManageGroupsDialog(ModalScreen):
                         self.groups_data[id(item)] = group
                         groups_list.append(item)
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in search input."""
+        if event.input.id == "group-search":
+            groups_list = self.query_one("#groups-list", ListView)
+
+            # Get non-member groups from current search results
+            non_member_groups = [
+                (item, self.groups_data.get(id(item)))
+                for item in groups_list.children
+                if self.groups_data.get(id(item)) and not self.groups_data.get(id(item), {}).get("is_member", False)
+            ]
+
+            if len(non_member_groups) == 1:
+                # Only one non-member group found, add automatically
+                _, group_data = non_member_groups[0]
+                self._add_to_group(group_data)
+            elif len(non_member_groups) > 1:
+                # Multiple groups, focus the list so user can select
+                groups_list.focus()
+            else:
+                # No groups to add (all are members or no results)
+                self.app.notify("No groups available to add", severity="information")
+
     def _search_groups(self, query: str) -> None:
         """Search for groups matching query and show in list."""
         try:
