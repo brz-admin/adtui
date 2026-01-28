@@ -29,6 +29,7 @@ class SelectableStatic(Static):
         self.selection_end: Optional[Tuple[int, int]] = None
         self.is_selecting: bool = False
         self._content_lines: List[str] = []
+        self._last_selected_text: Optional[str] = None
 
     def _get_plain_text_lines(self) -> List[str]:
         """Extract plain text lines from the current renderable content."""
@@ -86,6 +87,7 @@ class SelectableStatic(Static):
         selected_text = self._extract_selected_text()
 
         if selected_text and selected_text.strip():
+            self._last_selected_text = selected_text
             self._copy_to_clipboard(selected_text)
 
         # Clear selection
@@ -204,3 +206,11 @@ class SelectableStatic(Static):
             self.app.notify(f"Copied: {display_text}", severity="information", timeout=2)
         except Exception:
             pass  # Silently fail if notification fails
+
+    def get_last_selected_text(self) -> Optional[str]:
+        """Return the last selected text, if any."""
+        return self._last_selected_text
+
+    def clear_last_selected_text(self) -> None:
+        """Clear the stored last selected text."""
+        self._last_selected_text = None

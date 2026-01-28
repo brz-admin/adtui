@@ -1221,7 +1221,16 @@ class ADTUI(App):
         )
 
     def action_copy_to_clipboard(self):
-        """Copy selected object DN to clipboard (legacy - kept for compatibility)."""
+        """Copy selected text or object DN to clipboard."""
+        # Check if details pane has selected text
+        if hasattr(self, 'details') and hasattr(self.details, 'get_last_selected_text'):
+            selected_text = self.details.get_last_selected_text()
+            if selected_text:
+                self._copy_to_system_clipboard(selected_text, "selection")
+                self.details.clear_last_selected_text()
+                return
+
+        # Fall back to copying DN if no text selection
         if not self.current_selected_dn:
             self.notify("No object selected to copy", severity="warning")
             return

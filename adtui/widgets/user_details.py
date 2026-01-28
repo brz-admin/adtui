@@ -168,7 +168,15 @@ class UserDetailsPane(Static):
                 filetime = None
                 pwd_last_set_dt = None
 
-                if isinstance(pwd_last_set_value, str):
+                if isinstance(pwd_last_set_value, datetime):
+                    # ldap3 already converted to datetime object
+                    pwd_last_set_dt = pwd_last_set_value
+                    # Make timezone-naive for consistent handling
+                    if pwd_last_set_dt.tzinfo is not None:
+                        pwd_last_set_dt = pwd_last_set_dt.replace(tzinfo=None)
+                    pwd_last_set = pwd_last_set_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    filetime = None
+                elif isinstance(pwd_last_set_value, str):
                     if pwd_last_set_value == "0":
                         filetime = 0
                     else:
