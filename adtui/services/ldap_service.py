@@ -211,11 +211,12 @@ class LDAPService:
         try:
 
             def validate_op(conn: Connection):
+                # Accept both OUs and containers (Builtin, Users, Computers, etc.)
                 conn.search(
                     ou_dn,
-                    "(objectClass=organizationalUnit)",
+                    "(|(objectClass=organizationalUnit)(objectClass=container))",
                     search_scope="BASE",
-                    attributes=["ou"],
+                    attributes=["ou", "cn"],
                 )
                 return len(conn.entries) > 0
 
@@ -225,7 +226,7 @@ class LDAPService:
             return False
 
     def search_ous(self, base_dn: str, prefix: str = "", limit: int = 50) -> List[Dict]:
-        """Search for OUs at a specific level.
+        """Search for OUs and containers at a specific level.
 
         Args:
             base_dn: Base DN to search from
@@ -233,25 +234,32 @@ class LDAPService:
             limit: Maximum results
 
         Returns:
-            List of OU dictionaries
+            List of OU/container dictionaries
         """
         try:
 
             def search_ous_op(conn: Connection):
+                # Include both OUs and containers (Builtin, Users, Computers, etc.)
                 conn.search(
                     base_dn,
-                    "(objectClass=organizationalUnit)",
+                    "(|(objectClass=organizationalUnit)(objectClass=container))",
                     search_scope="LEVEL",
-                    attributes=["ou"],
+                    attributes=["ou", "cn"],
                     size_limit=limit,
                 )
 
                 ous = []
                 for entry in conn.entries:
-                    ou_name = str(entry.ou.value) if hasattr(entry, "ou") else None
-                    if ou_name:
-                        if not prefix or ou_name.lower().startswith(prefix.lower()):
-                            ous.append({"name": ou_name, "dn": entry.entry_dn})
+                    # Get name from ou (for OUs) or cn (for containers)
+                    if hasattr(entry, "ou") and entry.ou.value:
+                        name = str(entry.ou.value)
+                    elif hasattr(entry, "cn") and entry.cn.value:
+                        name = str(entry.cn.value)
+                    else:
+                        continue
+
+                    if not prefix or name.lower().startswith(prefix.lower()):
+                        ous.append({"name": name, "dn": entry.entry_dn})
 
                 return ous
 

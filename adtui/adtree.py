@@ -48,28 +48,42 @@ class ADTree(Tree):
         self.build_tree()
 
     def _build_direct_children(self, parent_node, parent_dn):
-        """Build only the direct children of an OU."""
+        """Build only the direct children of an OU or container."""
         try:
 
             def search_op(conn: Connection):
-                # Search for direct child OUs only
+                # Search for direct child OUs and containers (Builtin, Users, Computers, etc.)
                 conn.search(
                     parent_dn,
-                    "(objectClass=organizationalUnit)",
-                    attributes=["ou", "distinguishedName"],
+                    "(|(objectClass=organizationalUnit)(objectClass=container))",
+                    attributes=["ou", "cn", "distinguishedName", "objectClass"],
                     search_scope="LEVEL",
                     size_limit=1000,
                 )
 
-                # Sort OUs alphabetically
-                ous = sorted(conn.entries, key=lambda x: str(x["ou"]).lower())
+                # Sort alphabetically by name (ou for OUs, cn for containers)
+                def get_name(entry):
+                    if "ou" in entry and entry["ou"].value:
+                        return str(entry["ou"]).lower()
+                    elif "cn" in entry and entry["cn"].value:
+                        return str(entry["cn"]).lower()
+                    return ""
 
-                for ou in ous:
-                    ou_dn = ou.entry_dn
-                    if self._is_direct_child(ou_dn, parent_dn):
-                        ou_name = str(ou["ou"]) if "ou" in ou else "Unknown OU"
-                        ou_node = parent_node.add(f"📁 {ou_name}", expand=False)
-                        ou_node.data = ou_dn
+                entries = sorted(conn.entries, key=get_name)
+
+                for entry in entries:
+                    entry_dn = entry.entry_dn
+                    if self._is_direct_child(entry_dn, parent_dn):
+                        # Get name from ou (for OUs) or cn (for containers)
+                        if "ou" in entry and entry["ou"].value:
+                            name = str(entry["ou"])
+                        elif "cn" in entry and entry["cn"].value:
+                            name = str(entry["cn"])
+                        else:
+                            name = "Unknown"
+
+                        node = parent_node.add(f"📁 {name}", expand=False)
+                        node.data = entry_dn
 
             if self.connection_manager:
                 self.connection_manager.execute_with_retry(search_op)
@@ -126,7 +140,7 @@ class ADTree(Tree):
                 # Search for non-OU objects with a more specific filter
                 conn.search(
                     ou_dn,
-                    "(&(objectClass=*)(!(objectClass=organizationalUnit))(objectCategory=*))",
+                    "(&(objectClass=*)(!(objectClass=organizationalUnit))(!(objectClass=container))(objectCategory=*))",
                     search_scope="LEVEL",
                     attributes=["cn", "objectClass", "userAccountControl"],
                     size_limit=1000,
@@ -220,7 +234,7 @@ class ADTree(Tree):
                 # Search for non-OU objects with a more specific filter
                 conn.search(
                     ou_dn,
-                    "(&(objectClass=*)(!(objectClass=organizationalUnit))(objectCategory=*))",
+                    "(&(objectClass=*)(!(objectClass=organizationalUnit))(!(objectClass=container))(objectCategory=*))",
                     search_scope="LEVEL",
                     attributes=["cn", "objectClass", "userAccountControl"],
                     size_limit=1000,

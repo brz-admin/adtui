@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="Brz <brz@brznet.fr>"
-LABEL description="ADTUI - Active Directory Terminal User Interface"
-LABEL version="2.3.7"
+LABEL description="ADTUI - Active Directory Terminal User Interface (Web Server)"
+LABEL version="2.4.0"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -17,6 +17,9 @@ WORKDIR /app
 # Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install textual-dev for web serving
+RUN pip install --no-cache-dir textual-dev
 
 # Copy application
 COPY . .
@@ -37,6 +40,12 @@ ENV TERM=xterm-256color
 # Copy config example to user home
 RUN cp /app/config.ini.example /home/adtui/config.ini.example
 
-# Display version and help by default
-ENTRYPOINT ["adtui"]
-CMD ["--help"]
+# Expose web server port
+EXPOSE 8000
+
+# Default public URL (override with -e PUBLIC_URL=http://your-server:8000)
+ENV PUBLIC_URL=http://localhost:8000
+
+# Run textual serve with the serve module
+# The serve.py provides ADTUIServeApp which handles login within the TUI
+CMD textual serve --host 0.0.0.0 --port 8000 --url "$PUBLIC_URL" "python -m adtui.serve"
