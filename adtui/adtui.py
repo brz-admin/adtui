@@ -1610,8 +1610,13 @@ def main():
                 success, message = update_service.perform_update()
                 if success:
                     print(f"Update successful: {message}")
-                    print("Please restart ADTUI to use the new version.")
-                    return
+                    print("Restarting ADTUI with new version...\n")
+
+                    # Restart the application with the new version
+                    import sys
+                    import os
+                    # Use --no-auto-update to prevent infinite update loop
+                    os.execv(sys.executable, [sys.executable, "-m", "adtui", "--no-auto-update"])
                 else:
                     print(f"Auto-update failed: {message}")
                     print("Continuing with current version...\n")
