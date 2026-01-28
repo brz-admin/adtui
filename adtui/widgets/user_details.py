@@ -80,7 +80,8 @@ class UserDetailsPane(Static):
                             for attr, values in self.entry.entry_attributes:
                                 self.raw_attributes[attr] = values
                     except Exception as e:
-                        logger.warning("Failed to convert entry_attributes: %s", e)
+                        # Not critical - raw attributes are only used for the attributes dialog
+                        logger.debug("Failed to convert entry_attributes: %s", e)
                         self.raw_attributes = {}
             else:
                 logger.debug("No entries found in search results for %s", self.user_dn)
