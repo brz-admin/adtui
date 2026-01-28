@@ -88,6 +88,10 @@ class CommandHandler:
             "q": self._handle_quit,
             "quit": self._handle_quit,
             "exit": self._handle_quit,
+            # Logout/disconnect command
+            "logout": self._handle_logout,
+            "disconnect": self._handle_logout,
+            "lo": self._handle_logout,
             # Version and update commands
             "version": self._handle_version,
             "v": self._handle_version,
@@ -719,6 +723,7 @@ class CommandHandler:
 :h, :help        - Show this help
 :v, :version     - Show version
 :update          - Update to latest
+:logout, :lo     - Disconnect and return to login
 :q, :quit        - Quit application
 
 [bold]Keyboard Shortcuts:[/bold]
@@ -732,3 +737,10 @@ U - Unlock     ? - Help           / - Search
     def _handle_quit(self, args: str) -> None:
         """Handle quit command."""
         self.app.exit()
+
+    def _handle_logout(self, args: str) -> None:
+        """Handle logout/disconnect command to return to login screen."""
+        if hasattr(self.app, 'action_logout'):
+            self.app.action_logout()
+        else:
+            self.app.notify("Logout not available in this mode", severity="warning")

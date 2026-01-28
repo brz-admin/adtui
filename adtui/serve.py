@@ -215,6 +215,57 @@ class ADTUIServeApp(ADTUI):
         self._logged_in = False
         self._show_login()
 
+    def action_logout(self):
+        """Disconnect and return to login screen for domain switching."""
+        # Close current connection
+        if self.connection_manager:
+            try:
+                self.connection_manager.close()
+            except Exception:
+                pass
+            self.connection_manager = None
+
+        self._logged_in = False
+
+        # Clear the UI and show login again
+        self._clear_ui()
+
+        # Show domain selection or login
+        if self.config_service.has_multiple_domains():
+            from .ui.dialogs import ADSelectionDialog
+            self.push_screen(
+                ADSelectionDialog(self.config_service.ad_configs),
+                self._handle_ad_selection
+            )
+        else:
+            self._show_login()
+
+    def _clear_ui(self) -> None:
+        """Clear all UI widgets to prepare for new login."""
+        from textual.widgets import Static, Footer
+
+        # Remove all widgets except footer
+        for widget in list(self.query("*")):
+            try:
+                widget.remove()
+            except Exception:
+                pass
+
+        # Show splash screen again
+        from . import __version__
+
+        ascii_art = f"""[bold palegreen]   db    888b.    88888 8    8 888 [/bold palegreen]
+[bold palegreen]  dPYb   8   8      8   8    8  8  [/bold palegreen]
+[bold palegreen] dPwwYb  8   8      8   8b..d8  8  [/bold palegreen]
+[bold palegreen]dP    Yb 888P'      8   `Y88P' 888 [/bold palegreen]
+                            [dim]v{__version__}[/dim]"""
+
+        self.mount(Static(
+            f"{ascii_art}\n\n[bold cyan]Active Directory TUI[/bold cyan]\n\n[dim]Disconnected...[/dim]",
+            id="splash"
+        ))
+        self.mount(Footer())
+
 
 # Export class for direct import
 app = ADTUIServeApp

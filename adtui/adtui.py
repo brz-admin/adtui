@@ -1248,6 +1248,20 @@ class ADTUI(App):
             timeout=3,
         )
 
+    def action_logout(self):
+        """Disconnect and return to login screen for domain switching."""
+        # Close current connection
+        if self.connection_manager:
+            try:
+                self.connection_manager.close()
+            except Exception:
+                pass
+            self.connection_manager = None
+
+        # Signal that we need to restart login flow
+        self.auth_failed = True
+        self.exit()
+
     def _copy_to_system_clipboard(self, text: str, description: str):
         """Copy text to system clipboard with cross-platform support."""
         try:
@@ -1783,12 +1797,11 @@ def main():
                 app = ADTUI(username, password, ad_config)
                 app.run()
 
-                # Check if app exited due to auth failure (should restart login)
+                # Check if app exited due to auth failure or logout (should restart login)
                 # If app.auth_failed is True, continue loop to show login again
                 if getattr(app, "auth_failed", False):
-                    # Clear screen and show message before restarting login
+                    # Clear screen before restarting login
                     os.system("cls" if os.name == "nt" else "clear")
-                    logger.warning("Authentication failed. Please try again.")
                     continue
                 else:
                     # Normal exit - break the loop
