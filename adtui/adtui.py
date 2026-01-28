@@ -1600,7 +1600,8 @@ def main():
         try:
             from .services.update_service import UpdateService
             update_service = UpdateService()
-            result = update_service.check_for_update()
+            # Force fresh check, don't use cache for startup auto-update
+            result = update_service.check_for_update(force=True)
 
             if result.update_available:
                 print(f"Update available: {result.current_version} -> {result.latest_version}")
