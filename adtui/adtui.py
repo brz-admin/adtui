@@ -23,6 +23,7 @@ try:
     from .commands import CommandHandler
     from .ui.dialogs import (
         ConfirmDeleteDialog,
+        ConfirmForceDeleteDialog,
         ConfirmMoveDialog,
         ConfirmRestoreDialog,
         ConfirmUndoDialog,
@@ -40,6 +41,7 @@ except ImportError:
     from commands import CommandHandler
     from .ui.dialogs import (
         ConfirmDeleteDialog,
+        ConfirmForceDeleteDialog,
         ConfirmMoveDialog,
         ConfirmRestoreDialog,
         ConfirmUndoDialog,
@@ -221,6 +223,7 @@ class ADTUI(App):
 
         # Pending operations
         self.pending_delete_dn: Optional[str] = None
+        self.pending_force_delete_dn: Optional[str] = None
         self.pending_move_dn: Optional[str] = None
         self.pending_move_target: Optional[str] = None
         self.pending_restore_dn: Optional[str] = None
@@ -289,6 +292,7 @@ class ADTUI(App):
         self._update_result = result
 
         if result.update_available:
+
             def show_notification():
                 self.notify(
                     f"Update available: {result.current_version} -> {result.latest_version}. "
@@ -296,6 +300,7 @@ class ADTUI(App):
                     severity="information",
                     timeout=10,
                 )
+
             # Use call_from_thread since this is from background thread
             self.call_from_thread(show_notification)
 
@@ -902,7 +907,49 @@ class ADTUI(App):
             # Remove the deleted node from tree and select next appropriate node
             self.adtree.remove_node_by_dn(dn)
         else:
-            self.notify(message, severity=Severity.ERROR.value)
+            # Check if the failure is due to deletion protection
+            if self.ldap_service.is_protected_from_deletion(dn):
+                self.pending_force_delete_dn = dn
+                label = (
+                    str(self.current_selected_label)
+                    if self.current_selected_label
+                    else ""
+                )
+                self.push_screen(
+                    ConfirmForceDeleteDialog(label, dn),
+                    self.handle_force_delete_confirmation,
+                )
+            else:
+                self.notify(message, severity=Severity.ERROR.value)
+
+    def handle_force_delete_confirmation(self, confirmed: bool):
+        """Handle force delete confirmation for protected objects."""
+        if confirmed and self.pending_force_delete_dn:
+            dn = self.pending_force_delete_dn
+            # Remove the deletion protection first
+            success, message = self.ldap_service.remove_deletion_protection(dn)
+            if success:
+                # Retry the delete now that protection is removed
+                success, message = self.ldap_service.delete_object(dn)
+                if success:
+                    self.notify(
+                        "Protection removed and object deleted. Use :recycle to restore if needed.",
+                        severity=Severity.INFORMATION.value,
+                    )
+                    self.current_selected_dn = None
+                    self.current_selected_label = None
+                    if hasattr(self, "details") and self.details:
+                        self.details.update_content("No selection", None, None)
+                    self.adtree.remove_node_by_dn(dn)
+                else:
+                    self.notify(message, severity=Severity.ERROR.value)
+            else:
+                self.notify(message, severity=Severity.ERROR.value)
+        else:
+            self.notify(
+                MESSAGES["DELETE_CANCELLED"], severity=Severity.INFORMATION.value
+            )
+        self.pending_force_delete_dn = None
 
     # ==================== Move Operations ====================
 
@@ -1223,7 +1270,7 @@ class ADTUI(App):
     def action_copy_to_clipboard(self):
         """Copy selected text or object DN to clipboard."""
         # Check if details pane has selected text
-        if hasattr(self, 'details') and hasattr(self.details, 'get_last_selected_text'):
+        if hasattr(self, "details") and hasattr(self.details, "get_last_selected_text"):
             selected_text = self.details.get_last_selected_text()
             if selected_text:
                 self._copy_to_system_clipboard(selected_text, "selection")
@@ -1579,24 +1626,23 @@ def main():
         description="ADTUI - Active Directory Terminal User Interface"
     )
     parser.add_argument(
-        "--version", "-V",
-        action="version",
-        version=f"adtui {__version__}"
+        "--version", "-V", action="version", version=f"adtui {__version__}"
     )
     parser.add_argument(
-        "--update", "-u",
+        "--update",
+        "-u",
         action="store_true",
-        help="Check for updates and install if available, then exit"
+        help="Check for updates and install if available, then exit",
     )
     parser.add_argument(
         "--check-update",
         action="store_true",
-        help="Check for updates without installing, then exit"
+        help="Check for updates without installing, then exit",
     )
     parser.add_argument(
         "--no-auto-update",
         action="store_true",
-        help="Skip automatic update check and installation at startup"
+        help="Skip automatic update check and installation at startup",
     )
     args = parser.parse_args()
 
@@ -1613,12 +1659,15 @@ def main():
     if not args.no_auto_update:
         try:
             from .services.update_service import UpdateService
+
             update_service = UpdateService()
             # Force fresh check, don't use cache for startup auto-update
             result = update_service.check_for_update(force=True)
 
             if result.update_available:
-                print(f"Update available: {result.current_version} -> {result.latest_version}")
+                print(
+                    f"Update available: {result.current_version} -> {result.latest_version}"
+                )
                 print("Installing update...")
 
                 success, message = update_service.perform_update()
@@ -1629,8 +1678,12 @@ def main():
                     # Restart the application with the new version
                     import sys
                     import os
+
                     # Use --no-auto-update to prevent infinite update loop
-                    os.execv(sys.executable, [sys.executable, "-m", "adtui", "--no-auto-update"])
+                    os.execv(
+                        sys.executable,
+                        [sys.executable, "-m", "adtui", "--no-auto-update"],
+                    )
                 else:
                     print(f"Auto-update failed: {message}")
                     print("Continuing with current version...\n")

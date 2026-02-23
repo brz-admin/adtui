@@ -42,6 +42,45 @@ class LDAPControl:
     """LDAP control OIDs."""
 
     SHOW_DELETED_OBJECTS = "1.2.840.113556.1.4.417"
+    SD_FLAGS = "1.2.840.113556.1.4.801"
+
+
+class SecurityDescriptor:
+    """Windows Security Descriptor constants for parsing nTSecurityDescriptor."""
+
+    # SD Control flags
+    DACL_PRESENT = 0x0004
+
+    # SD_FLAGS values for the SD_FLAGS control
+    DACL_SECURITY_INFORMATION = 0x04
+
+    # ACE types
+    ACCESS_DENIED_ACE_TYPE = 0x01
+
+    # Access mask bits
+    DELETE = 0x00010000
+    DELETE_CHILD = 0x00000040  # ADS_RIGHT_DS_DELETE_CHILD
+
+    # Everyone SID: S-1-1-0 (binary representation)
+    EVERYONE_SID = b"\x01\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00"
+
+
+class FileTime:
+    """Windows FILETIME conversion constants."""
+
+    # Epoch offset: number of 100-nanosecond intervals between
+    # 1601-01-01 and 1970-01-01
+    EPOCH_DIFF = 116444736000000000
+
+    # FILETIME attributes that need special handling in attribute editor
+    FILETIME_ATTRIBUTES = [
+        "accountExpires",
+        "badPasswordTime",
+        "lastLogon",
+        "lastLogonTimestamp",
+        "lockoutTime",
+        "pwdLastSet",
+    ]
 
 
 class UserAccountControl:

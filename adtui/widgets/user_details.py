@@ -11,7 +11,7 @@ from ldap3 import MODIFY_REPLACE, MODIFY_ADD, MODIFY_DELETE
 
 # Add parent directory to path to import constants
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from constants import PasswordPolicy, UserAccountControl
+from constants import AccountPolicy, PasswordPolicy, UserAccountControl
 
 logger = logging.getLogger(__name__)
 
@@ -367,13 +367,17 @@ class UserDetailsPane(Static):
 
         # Account expiry
         account_expiry_warning = ""
+        account_expires_display = ""
+        account_expiry_info = ""
         if hasattr(self.entry, "accountExpires") and self.entry.accountExpires.value:
             try:
                 account_expires_filetime = int(self.entry.accountExpires.value)
-                # 0 or 9223372036854775807 (0x7FFFFFFFFFFFFFFF) means never expires
-                if account_expires_filetime not in [0, 9223372036854775807]:
+                if account_expires_filetime not in AccountPolicy.NEVER_EXPIRES_VALUES:
                     account_expires_dt = datetime(1601, 1, 1) + timedelta(
                         microseconds=account_expires_filetime / 10
+                    )
+                    account_expires_display = account_expires_dt.strftime(
+                        "%Y-%m-%d %H:%M:%S"
                     )
                     days_until_account_expiry = (
                         account_expires_dt - datetime.now()
@@ -381,12 +385,69 @@ class UserDetailsPane(Static):
 
                     if days_until_account_expiry < 0:
                         account_expiry_warning = f"[red bold]⚠ ACCOUNT EXPIRED {abs(days_until_account_expiry)} days ago![/red bold]"
-                    elif days_until_account_expiry <= 7:
+                        account_expiry_info = f"[red]Expired {abs(days_until_account_expiry)} days ago[/red]"
+                    elif (
+                        days_until_account_expiry <= AccountPolicy.WARNING_DAYS_CRITICAL
+                    ):
                         account_expiry_warning = f"[yellow bold]⚠ Account expires in {days_until_account_expiry} days![/yellow bold]"
-                    elif days_until_account_expiry <= 30:
+                        account_expiry_info = f"[yellow]{days_until_account_expiry} days remaining[/yellow]"
+                    elif days_until_account_expiry <= AccountPolicy.WARNING_DAYS_NORMAL:
                         account_expiry_warning = f"[yellow]⚠ Account expires in {days_until_account_expiry} days[/yellow]"
+                        account_expiry_info = f"[yellow]{days_until_account_expiry} days remaining[/yellow]"
+                    else:
+                        account_expiry_info = (
+                            f"[green]{days_until_account_expiry} days remaining[/green]"
+                        )
             except Exception as e:
                 logger.debug("Error parsing accountExpires: %s", e)
+
+        # Last login
+        last_login_display = "N/A"
+        try:
+            last_logon_dt = None
+            last_logon_ts_dt = None
+
+            # lastLogon (per-DC, not replicated)
+            if hasattr(self.entry, "lastLogon") and self.entry.lastLogon.value:
+                val = self.entry.lastLogon.value
+                if isinstance(val, datetime):
+                    last_logon_dt = val
+                else:
+                    ft = int(val)
+                    if ft > 0:
+                        last_logon_dt = datetime(1601, 1, 1) + timedelta(
+                            microseconds=ft / 10
+                        )
+
+            # lastLogonTimestamp (replicated, less precise)
+            if (
+                hasattr(self.entry, "lastLogonTimestamp")
+                and self.entry.lastLogonTimestamp.value
+            ):
+                val = self.entry.lastLogonTimestamp.value
+                if isinstance(val, datetime):
+                    last_logon_ts_dt = val
+                else:
+                    ft = int(val)
+                    if ft > 0:
+                        last_logon_ts_dt = datetime(1601, 1, 1) + timedelta(
+                            microseconds=ft / 10
+                        )
+
+            # Use the most recent of the two
+            if last_logon_dt and last_logon_ts_dt:
+                best = max(last_logon_dt, last_logon_ts_dt)
+            elif last_logon_dt:
+                best = last_logon_dt
+            elif last_logon_ts_dt:
+                best = last_logon_ts_dt
+            else:
+                best = None
+
+            if best:
+                last_login_display = best.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            logger.debug("Error parsing last login: %s", e)
 
         # Build the content with alerts
         alerts = ""
@@ -394,6 +455,11 @@ class UserDetailsPane(Static):
             alerts += f"\n{pwd_expiry_warning}\n"
         if account_expiry_warning:
             alerts += f"\n{account_expiry_warning}\n"
+
+        # Account expiry line
+        account_expires_line = ""
+        if account_expires_display:
+            account_expires_line = f"\nAccount Expires: {account_expires_display}{' - ' + account_expiry_info if account_expiry_info else ''}"
 
         content = f"""[bold cyan]User Details[/bold cyan]{alerts}
 
@@ -409,7 +475,8 @@ Home Directory: {home_dir}
 Disabled: {"[red]Yes[/red]" if is_disabled else "[green]No[/green]"}
 Locked: {"[red]Yes[/red]" if is_locked else "[green]No[/green]"}
 Password Never Expires: {"Yes" if password_never_expires else "No"}
-Password Last Set: {pwd_last_set}{" - " + pwd_expiry_info if pwd_expiry_info and not password_never_expires else ""}
+Password Last Set: {pwd_last_set}{" - " + pwd_expiry_info if pwd_expiry_info and not password_never_expires else ""}{account_expires_line}
+Last Login: {last_login_display}
 
 [bold]Member Of ({len(self.member_of)} groups):[/bold]
 """

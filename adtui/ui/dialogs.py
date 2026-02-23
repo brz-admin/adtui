@@ -73,6 +73,23 @@ class ConfirmDeleteDialog(BaseConfirmDialog):
         )
 
 
+class ConfirmForceDeleteDialog(BaseConfirmDialog):
+    """Dialog to confirm deletion of a protected object."""
+
+    def __init__(self, label: str, dn: str):
+        super().__init__(
+            title="[bold red]Protected Object[/bold red]",
+            message=(
+                f"This object is protected from accidental deletion:\n\n"
+                f"{label}\n\n"
+                f"DN: {dn}\n\n"
+                f"Remove protection and delete anyway?"
+            ),
+            confirm_text="Force Delete",
+            confirm_variant="error",
+        )
+
+
 class ConfirmMoveDialog(BaseConfirmDialog):
     """Dialog to confirm object move."""
 
@@ -482,7 +499,8 @@ class ManageGroupsDialog(ModalScreen):
             non_member_groups = [
                 (item, self.groups_data.get(id(item)))
                 for item in groups_list.children
-                if self.groups_data.get(id(item)) and not self.groups_data.get(id(item), {}).get("is_member", False)
+                if self.groups_data.get(id(item))
+                and not self.groups_data.get(id(item), {}).get("is_member", False)
             ]
 
             if len(non_member_groups) == 1:
@@ -737,12 +755,86 @@ class EditAttributesDialog(ModalScreen):
 class EditSingleAttributeDialog(ModalScreen):
     """Dialog to edit a single attribute."""
 
+    # FILETIME attributes that need date <-> FILETIME conversion
+    FILETIME_ATTRIBUTES = [
+        "accountExpires",
+        "badPasswordTime",
+        "lastLogon",
+        "lastLogonTimestamp",
+        "lockoutTime",
+        "pwdLastSet",
+    ]
+
     def __init__(self, dn: str, connection_manager, attr_name: str, current_values):
         super().__init__()
         self.dn = dn
         self.connection_manager = connection_manager
         self.attr_name = attr_name
         self.current_values = current_values
+
+    def _is_filetime_attribute(self) -> bool:
+        """Check if the current attribute uses Windows FILETIME format."""
+        return self.attr_name in self.FILETIME_ATTRIBUTES
+
+    def _filetime_to_display(self, value_str: str) -> str:
+        """Convert a FILETIME value or auto-converted datetime to YYYY-MM-DD format for editing."""
+        from datetime import datetime, timedelta
+
+        # Handle "never expires" values for accountExpires
+        try:
+            int_val = int(value_str)
+            if int_val == 0 or int_val == 9223372036854775807:
+                return "never"
+            if int_val > 0:
+                dt = datetime(1601, 1, 1) + timedelta(microseconds=int_val / 10)
+                return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OverflowError):
+            pass
+
+        # ldap3 may have auto-converted to a datetime string like "2025-08-25 05:38:16.421434+00:00"
+        for fmt in [
+            "%Y-%m-%d %H:%M:%S.%f%z",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%Y-%m-%d %H:%M:%S",
+        ]:
+            try:
+                dt = datetime.strptime(value_str.strip(), fmt)
+                return dt.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+
+        return value_str
+
+    def _display_to_filetime(self, value: str) -> str:
+        """Convert a user-entered date string to FILETIME integer string for AD."""
+        from datetime import datetime, timedelta
+
+        value = value.strip().lower()
+
+        # "never" or "0" means never expires (for accountExpires)
+        if value in ("never", "0", ""):
+            if self.attr_name == "accountExpires":
+                return "0"
+            return "0"
+
+        # Try parsing as a date
+        for fmt in ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"]:
+            try:
+                dt = datetime.strptime(value, fmt)
+                # Convert to FILETIME: 100-nanosecond intervals since 1601-01-01
+                filetime = int((dt - datetime(1601, 1, 1)).total_seconds() * 10000000)
+                return str(filetime)
+            except (ValueError, TypeError):
+                continue
+
+        # If it's already a valid integer, pass through
+        try:
+            int(value)
+            return value
+        except ValueError:
+            raise ValueError(
+                f"Invalid date format: '{value}'. Use YYYY-MM-DD or 'never'."
+            )
 
     def compose(self) -> ComposeResult:
         # Convert values to string
@@ -751,9 +843,15 @@ class EditSingleAttributeDialog(ModalScreen):
         else:
             value_str = str(self.current_values)
 
+        # For FILETIME attributes, convert to human-readable date
+        hint = "[dim]For multi-value: one per line[/dim]"
+        if self._is_filetime_attribute():
+            value_str = self._filetime_to_display(value_str)
+            hint = "[dim]Format: YYYY-MM-DD (or 'never' for no expiry)[/dim]"
+
         yield Vertical(
             Static(
-                f"[bold cyan]Edit Attribute: {self.attr_name}[/bold cyan]\n\n[dim]For multi-value: one per line[/dim]\n",
+                f"[bold cyan]Edit Attribute: {self.attr_name}[/bold cyan]\n\n{hint}\n",
                 id="question",
             ),
             Input(placeholder="New value", id="attr-value", value=value_str),
@@ -773,8 +871,17 @@ class EditSingleAttributeDialog(ModalScreen):
                 new_value = self.query_one("#attr-value", Input).value.strip()
 
                 if new_value:
-                    # Split by newlines for multi-value
-                    values = [v.strip() for v in new_value.split("\n") if v.strip()]
+                    # For FILETIME attributes, convert date input to FILETIME
+                    if self._is_filetime_attribute():
+                        try:
+                            converted = self._display_to_filetime(new_value)
+                            values = [converted]
+                        except ValueError as ve:
+                            self.app.notify(str(ve), severity="error")
+                            return
+                    else:
+                        # Split by newlines for multi-value
+                        values = [v.strip() for v in new_value.split("\n") if v.strip()]
 
                     def update_attr_op(conn):
                         conn.modify(
@@ -785,14 +892,35 @@ class EditSingleAttributeDialog(ModalScreen):
                     self.app.notify(f"Updated {self.attr_name}", severity="information")
                     self.dismiss(True)
                 else:
-                    # Delete the attribute if value is empty
+                    # For accountExpires, empty means "never expires" (set to 0)
+                    if self.attr_name == "accountExpires":
 
-                    def delete_attr_op(conn):
-                        conn.modify(self.dn, {self.attr_name: [(MODIFY_DELETE, [])]})
+                        def set_never_op(conn):
+                            conn.modify(
+                                self.dn,
+                                {self.attr_name: [(MODIFY_REPLACE, ["0"])]},
+                            )
 
-                    self.connection_manager.execute_with_retry(delete_attr_op)
-                    self.app.notify(f"Deleted {self.attr_name}", severity="information")
-                    self.dismiss(True)
+                        self.connection_manager.execute_with_retry(set_never_op)
+                        self.app.notify(
+                            f"Set {self.attr_name} to never expire",
+                            severity="information",
+                        )
+                        self.dismiss(True)
+                    else:
+                        # Delete the attribute if value is empty
+
+                        def delete_attr_op(conn):
+                            conn.modify(
+                                self.dn,
+                                {self.attr_name: [(MODIFY_DELETE, [])]},
+                            )
+
+                        self.connection_manager.execute_with_retry(delete_attr_op)
+                        self.app.notify(
+                            f"Deleted {self.attr_name}", severity="information"
+                        )
+                        self.dismiss(True)
             except Exception as e:
                 self.app.notify(f"Error: {e}", severity="error")
         else:

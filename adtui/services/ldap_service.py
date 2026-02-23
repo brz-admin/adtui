@@ -2,6 +2,7 @@
 
 import logging
 import os
+import struct
 import sys
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
@@ -15,6 +16,7 @@ from constants import (
     ObjectType,
     SearchScope,
     LDAPControl,
+    SecurityDescriptor,
     UserAccountControl,
 )
 from .connection_manager import ConnectionManager
@@ -168,6 +170,222 @@ class LDAPService:
             return self.connection_manager.execute_with_retry(delete_op)
         except Exception as e:
             return False, f"Error deleting object: {e}"
+
+    def is_protected_from_deletion(self, dn: str) -> bool:
+        """Check if an AD object is protected from accidental deletion.
+
+        Reads the object's security descriptor (DACL) and checks for
+        deny-Delete ACEs targeting the Everyone principal (S-1-1-0).
+
+        Args:
+            dn: Distinguished Name of the object
+
+        Returns:
+            True if the object has deletion protection enabled
+        """
+        try:
+            sd_bytes = self._read_dacl(dn)
+            if not sd_bytes:
+                return False
+            return self._dacl_has_deny_delete(sd_bytes)
+        except Exception as e:
+            logger.debug("Error checking deletion protection for %s: %s", dn, e)
+            return False
+
+    def remove_deletion_protection(self, dn: str) -> Tuple[bool, str]:
+        """Remove 'Protect from accidental deletion' from an AD object.
+
+        Reads the object's DACL, removes deny-Delete ACEs for Everyone,
+        and writes the modified DACL back.
+
+        Args:
+            dn: Distinguished Name of the object
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            sd_bytes = self._read_dacl(dn)
+            if not sd_bytes:
+                return False, "Could not read security descriptor"
+
+            if not self._dacl_has_deny_delete(sd_bytes):
+                return True, "Object is not protected from accidental deletion"
+
+            new_sd = self._remove_deny_delete_aces(sd_bytes)
+            if new_sd == sd_bytes:
+                return False, "Could not modify security descriptor"
+
+            # Write the modified DACL back
+            sd_flags_value = struct.pack(
+                "<I", SecurityDescriptor.DACL_SECURITY_INFORMATION
+            )
+            sd_flags_control = (LDAPControl.SD_FLAGS, True, sd_flags_value)
+
+            def write_sd_op(conn: Connection):
+                conn.modify(
+                    dn,
+                    {"nTSecurityDescriptor": [(MODIFY_REPLACE, [new_sd])]},
+                    controls=[sd_flags_control],
+                )
+                if conn.result["result"] == 0:
+                    return True, "Deletion protection removed"
+                else:
+                    return (
+                        False,
+                        f"Failed to remove protection: {conn.result.get('message', 'Unknown error')}",
+                    )
+
+            return self.connection_manager.execute_with_retry(write_sd_op)
+        except Exception as e:
+            return False, f"Error removing deletion protection: {e}"
+
+    def _read_dacl(self, dn: str) -> Optional[bytes]:
+        """Read the DACL portion of an object's security descriptor.
+
+        Args:
+            dn: Distinguished Name of the object
+
+        Returns:
+            Raw bytes of the security descriptor (DACL only), or None on failure
+        """
+        sd_flags_value = struct.pack("<I", SecurityDescriptor.DACL_SECURITY_INFORMATION)
+        sd_flags_control = (LDAPControl.SD_FLAGS, True, sd_flags_value)
+
+        def read_sd_op(conn: Connection):
+            conn.search(
+                dn,
+                "(objectClass=*)",
+                search_scope="BASE",
+                attributes=["nTSecurityDescriptor"],
+                controls=[sd_flags_control],
+            )
+            if conn.entries:
+                return conn.entries[0].nTSecurityDescriptor.raw_values[0]
+            return None
+
+        return self.connection_manager.execute_with_retry(read_sd_op)
+
+    def _dacl_has_deny_delete(self, sd_bytes: bytes) -> bool:
+        """Check if a security descriptor's DACL contains deny-Delete ACEs for Everyone.
+
+        Args:
+            sd_bytes: Raw security descriptor bytes
+
+        Returns:
+            True if deny-Delete ACEs for Everyone are present
+        """
+        SD = SecurityDescriptor
+
+        # Parse SD header: Revision(1) + Sbz1(1) + Control(2) + offsets(4x4)
+        if len(sd_bytes) < 20:
+            return False
+
+        control = struct.unpack_from("<H", sd_bytes, 2)[0]
+        if not (control & SD.DACL_PRESENT):
+            return False
+
+        offset_dacl = struct.unpack_from("<I", sd_bytes, 16)[0]
+        if offset_dacl == 0 or offset_dacl + 8 > len(sd_bytes):
+            return False
+
+        # Parse DACL header: Revision(1) + Sbz1(1) + AclSize(2) + AceCount(2) + Sbz2(2)
+        ace_count = struct.unpack_from("<H", sd_bytes, offset_dacl + 4)[0]
+
+        pos = offset_dacl + 8  # Start of first ACE
+        for _ in range(ace_count):
+            if pos + 8 > len(sd_bytes):
+                break
+
+            ace_type, ace_flags, ace_size = struct.unpack_from("<BBH", sd_bytes, pos)
+
+            if ace_type == SD.ACCESS_DENIED_ACE_TYPE and ace_size >= 20:
+                mask = struct.unpack_from("<I", sd_bytes, pos + 4)[0]
+                # SID starts at offset 8 within the ACE
+                sid_start = pos + 8
+                sid_end = sid_start + len(SD.EVERYONE_SID)
+
+                if sid_end <= len(sd_bytes):
+                    sid_bytes = sd_bytes[sid_start:sid_end]
+                    if sid_bytes == SD.EVERYONE_SID and (mask & SD.DELETE):
+                        return True
+
+            pos += ace_size
+
+        return False
+
+    def _remove_deny_delete_aces(self, sd_bytes: bytes) -> bytes:
+        """Remove deny-Delete ACEs for Everyone from a security descriptor.
+
+        Args:
+            sd_bytes: Raw security descriptor bytes
+
+        Returns:
+            Modified security descriptor bytes with deny-Delete ACEs removed
+        """
+        SD = SecurityDescriptor
+
+        control = struct.unpack_from("<H", sd_bytes, 2)[0]
+        if not (control & SD.DACL_PRESENT):
+            return sd_bytes
+
+        offset_dacl = struct.unpack_from("<I", sd_bytes, 16)[0]
+        if offset_dacl == 0 or offset_dacl + 8 > len(sd_bytes):
+            return sd_bytes
+
+        # Parse DACL header
+        dacl_header = sd_bytes[offset_dacl : offset_dacl + 8]
+        dacl_revision = dacl_header[0]
+        dacl_sbz1 = dacl_header[1]
+        ace_count = struct.unpack_from("<H", dacl_header, 4)[0]
+        dacl_sbz2 = struct.unpack_from("<H", dacl_header, 6)[0]
+
+        # Walk ACEs, keeping those that are NOT deny-Delete for Everyone
+        kept_aces = bytearray()
+        kept_count = 0
+        pos = offset_dacl + 8
+
+        for _ in range(ace_count):
+            if pos + 4 > len(sd_bytes):
+                break
+
+            ace_type, ace_flags, ace_size = struct.unpack_from("<BBH", sd_bytes, pos)
+            ace_bytes = sd_bytes[pos : pos + ace_size]
+
+            skip = False
+            if ace_type == SD.ACCESS_DENIED_ACE_TYPE and ace_size >= 20:
+                mask = struct.unpack_from("<I", sd_bytes, pos + 4)[0]
+                sid_start = pos + 8
+                sid_end = sid_start + len(SD.EVERYONE_SID)
+
+                if sid_end <= len(sd_bytes):
+                    sid_bytes = sd_bytes[sid_start:sid_end]
+                    if sid_bytes == SD.EVERYONE_SID and (mask & SD.DELETE):
+                        skip = True
+                        logger.info(
+                            "Removing deny-Delete ACE for Everyone (mask=0x%08X)", mask
+                        )
+
+            if not skip:
+                kept_aces.extend(ace_bytes)
+                kept_count += 1
+
+            pos += ace_size
+
+        # Rebuild DACL: header + kept ACEs
+        new_dacl_size = 8 + len(kept_aces)
+        new_dacl_header = struct.pack(
+            "<BBHHH", dacl_revision, dacl_sbz1, new_dacl_size, kept_count, dacl_sbz2
+        )
+
+        # Rebuild the full SD: everything before DACL + new DACL + everything after
+        old_dacl_size = struct.unpack_from("<H", sd_bytes, offset_dacl + 2)[0]
+        new_sd = bytearray(sd_bytes)
+        new_sd[offset_dacl : offset_dacl + old_dacl_size] = new_dacl_header + bytes(
+            kept_aces
+        )
+
+        return bytes(new_sd)
 
     def move_object(self, dn: str, target_ou: str) -> Tuple[bool, str, Optional[str]]:
         """Move an AD object to a different OU.
@@ -941,7 +1159,8 @@ class LDAPService:
 
                 # Step 3: Apply final UAC (enable account if not disabled)
                 conn.modify(
-                    user_dn, {"userAccountControl": [(MODIFY_REPLACE, [str(final_uac)])]}
+                    user_dn,
+                    {"userAccountControl": [(MODIFY_REPLACE, [str(final_uac)])]},
                 )
 
                 # Step 4: If user must change password at next logon, set pwdLastSet to 0
