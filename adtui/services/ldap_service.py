@@ -1048,6 +1048,79 @@ class LDAPService:
 
         return samaccount
 
+    def create_group(
+        self,
+        group_name: str,
+        ou_dn: str,
+        description: str = "",
+        group_scope: str = "Global",
+        group_type: str = "Security",
+    ) -> Tuple[bool, str, str]:
+        """Create a new AD group.
+
+        Args:
+            group_name: Group name (CN and sAMAccountName)
+            ou_dn: Target OU DN
+            description: Optional description
+            group_scope: Group scope - "Global", "Domain Local", or "Universal"
+            group_type: Group type - "Security" or "Distribution"
+
+        Returns:
+            Tuple of (success: bool, message: str, group_dn: str)
+        """
+        try:
+            # Validate required fields
+            if not group_name.strip():
+                return False, "Group name is required", ""
+
+            # Check sAMAccountName availability
+            available, message = self.check_samaccount_availability(group_name)
+            if not available:
+                return False, message, ""
+
+            # Calculate groupType integer from scope and type
+            # Scope flags
+            scope_flags = {
+                "Global": 0x00000002,
+                "Domain Local": 0x00000004,
+                "Universal": 0x00000008,
+            }
+            scope_flag = scope_flags.get(group_scope, 0x00000002)
+
+            # Security flag (0x80000000 is the security bit)
+            if group_type == "Security":
+                group_type_value = scope_flag | 0x80000000
+            else:
+                group_type_value = scope_flag
+
+            # Generate group DN
+            group_dn = f"cn={group_name},{ou_dn}"
+
+            # Prepare attributes
+            attributes = {
+                "objectClass": ["top", "group"],
+                "cn": group_name,
+                "sAMAccountName": group_name,
+                "groupType": str(group_type_value),
+            }
+
+            if description:
+                attributes["description"] = description
+
+            def create_group_op(conn: Connection):
+                result = conn.add(group_dn, attributes=attributes)
+
+                if result:
+                    return True, f"Successfully created group: {group_name}", group_dn
+                else:
+                    error_msg = conn.result.get("message", "Unknown error")
+                    return False, f"Failed to create group: {error_msg}", ""
+
+            return self.connection_manager.execute_with_retry(create_group_op)
+
+        except Exception as e:
+            return False, f"Error creating group: {e}", ""
+
     def create_user(
         self,
         full_name: str,

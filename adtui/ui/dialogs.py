@@ -25,6 +25,8 @@ from textual.widgets import (
     Label,
     Checkbox,
     TextArea,
+    RadioButton,
+    RadioSet,
 )
 
 logger = logging.getLogger(__name__)
@@ -1285,6 +1287,122 @@ class CreateUserDialog(ModalScreen):
 
         except Exception as e:
             self.app.notify(f"Error creating user: {e}", severity="error")
+
+
+class CreateGroupDialog(ModalScreen):
+    """Dialog to create a new AD group."""
+
+    def __init__(self, target_ou: str, ldap_service):
+        super().__init__()
+        self.target_ou = target_ou
+        self.ldap_service = ldap_service
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static("[bold green]Create New Group[/bold green]\n"),
+            Static(f"Target OU: [cyan]{self.target_ou}[/cyan]\n"),
+            ScrollableContainer(
+                Input(placeholder="Group Name*", id="group-name"),
+                Input(placeholder="Description (optional)", id="group-description"),
+                Static("\n[bold]Group Scope:[/bold]"),
+                RadioSet(
+                    RadioButton("Global", value=True, id="scope-global"),
+                    RadioButton("Domain Local", id="scope-domain-local"),
+                    RadioButton("Universal", id="scope-universal"),
+                    id="group-scope",
+                ),
+                Static("\n[bold]Group Type:[/bold]"),
+                RadioSet(
+                    RadioButton("Security", value=True, id="type-security"),
+                    RadioButton("Distribution", id="type-distribution"),
+                    id="group-type",
+                ),
+                id="scrollable-content",
+            ),
+            Horizontal(
+                Button("Create", variant="success", id="create"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-buttons",
+            ),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "create":
+            self._create_group()
+        else:
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Validate sAMAccountName availability when group name is submitted."""
+        if event.input.id == "group-name":
+            group_name = event.value.strip()
+            if group_name:
+                available, message = self.ldap_service.check_samaccount_availability(
+                    group_name
+                )
+                if not available:
+                    self.app.notify(message, severity="warning")
+
+    def _get_selected_scope(self) -> str:
+        """Get the selected group scope."""
+        scope_set = self.query_one("#group-scope", RadioSet)
+        if scope_set.pressed_index == 0:
+            return "Global"
+        elif scope_set.pressed_index == 1:
+            return "Domain Local"
+        elif scope_set.pressed_index == 2:
+            return "Universal"
+        return "Global"
+
+    def _get_selected_type(self) -> str:
+        """Get the selected group type."""
+        type_set = self.query_one("#group-type", RadioSet)
+        if type_set.pressed_index == 0:
+            return "Security"
+        elif type_set.pressed_index == 1:
+            return "Distribution"
+        return "Security"
+
+    def _create_group(self):
+        """Create the group."""
+        try:
+            # Get form values
+            group_name = self.query_one("#group-name", Input).value.strip()
+            description = self.query_one("#group-description", Input).value.strip()
+
+            # Validate required fields
+            if not group_name:
+                self.app.notify("Group Name is required", severity="warning")
+                return
+
+            group_scope = self._get_selected_scope()
+            group_type = self._get_selected_type()
+
+            # Create group
+            success, message, group_dn = self.ldap_service.create_group(
+                group_name=group_name,
+                ou_dn=self.target_ou,
+                description=description,
+                group_scope=group_scope,
+                group_type=group_type,
+            )
+
+            if success:
+                self.app.notify(message, severity="information")
+                self.dismiss(
+                    {
+                        "success": True,
+                        "message": message,
+                        "group_dn": group_dn,
+                        "group_name": group_name,
+                    }
+                )
+            else:
+                self.app.notify(message, severity="error")
+
+        except Exception as e:
+            self.app.notify(f"Error creating group: {e}", severity="error")
 
 
 class CopyUserDialog(ModalScreen):

@@ -64,6 +64,9 @@ class CommandHandler:
             "cu": self._handle_create_user,
             "copyuser": self._handle_copy_user,
             "cp": self._handle_copy_user,
+            # Group creation commands
+            "creategroup": self._handle_create_group,
+            "cg": self._handle_create_group,
             # Undo commands
             "undo": self._handle_undo,
             "u": self._handle_undo,
@@ -331,6 +334,29 @@ class CommandHandler:
             self.app.handle_create_user_confirmation,
         )
 
+    def _handle_create_group(self, args: str) -> None:
+        """Handle create group command."""
+        from ui.dialogs import CreateGroupDialog
+
+        # Determine target OU
+        if args.strip():
+            # Use specified OU path
+            target_ou = self.app.path_service.resolve_path(args.strip())
+        else:
+            # Use current selected OU
+            target_ou = self._get_current_ou()
+
+        if not target_ou:
+            self.app.notify(
+                "No target OU specified or selected", severity=Severity.WARNING.value
+            )
+            return
+
+        self.app.push_screen(
+            CreateGroupDialog(target_ou, self.app.ldap_service),
+            self.app.handle_create_group_confirmation,
+        )
+
     def _handle_copy_user(self, args: str) -> None:
         """Handle copy user command."""
         from ui.dialogs import CopyUserDialog
@@ -544,6 +570,20 @@ class CommandHandler:
                 if confirmed
                 else None,
             )
+        elif last_op.type == "create_group":
+            from ui.dialogs import BaseConfirmDialog
+
+            self.app.push_screen(
+                BaseConfirmDialog(
+                    title="[bold red]⚠ Undo Create Group[/bold red]",
+                    message=f"Are you sure you want to undo creating this group?\n\n{last_op.details['group_name']}\n\n[yellow]This will permanently delete the group.[/yellow]",
+                    confirm_text="Delete",
+                    confirm_variant="error",
+                ),
+                lambda confirmed: self.app.undo_create_group(last_op)
+                if confirmed
+                else None,
+            )
         else:
             self.app.notify(
                 f"Cannot undo operation type: {last_op.type}",
@@ -605,6 +645,7 @@ class CommandHandler:
                 )
         except Exception as e:
             from adtui import __version__
+
             self.app.notify(
                 f"ADTUI {__version__}",
                 severity=Severity.INFORMATION.value,
@@ -632,8 +673,8 @@ class CommandHandler:
                 BaseConfirmDialog(
                     title="[bold cyan]Update Available[/bold cyan]",
                     message=f"Current version: {result.current_version}\n"
-                            f"Latest version: {result.latest_version}\n\n"
-                            f"Update now? You will need to restart after updating.",
+                    f"Latest version: {result.latest_version}\n\n"
+                    f"Update now? You will need to restart after updating.",
                     confirm_text="Update",
                     confirm_variant="success",
                 ),
@@ -652,11 +693,14 @@ class CommandHandler:
             return
 
         # Perform update in background
-        self.app.notify("Updating ADTUI... Please wait.", severity=Severity.INFORMATION.value)
+        self.app.notify(
+            "Updating ADTUI... Please wait.", severity=Severity.INFORMATION.value
+        )
 
         def do_update():
             try:
                 from adtui.services.update_service import UpdateService
+
                 update_service = UpdateService()
                 success, message = update_service.perform_update()
 
@@ -676,14 +720,17 @@ class CommandHandler:
 
                 self.app.call_from_thread(show_result)
             except Exception as e:
+
                 def show_error():
                     self.app.notify(
                         f"Update error: {e}",
                         severity=Severity.ERROR.value,
                     )
+
                 self.app.call_from_thread(show_error)
 
         import threading
+
         thread = threading.Thread(target=do_update, daemon=True)
         thread.start()
 
@@ -710,6 +757,9 @@ class CommandHandler:
 :cu, :createuser - Create new user account
 :cp, :copyuser   - Copy user account
 
+[bold]Group Management:[/bold]
+:cg, :creategroup - Create new group
+
 [bold]OU Management:[/bold]
 :mkou, :createou - Create new OU
 :tree, :rebuild  - Rebuild AD tree
@@ -728,6 +778,7 @@ class CommandHandler:
 
 [bold]Keyboard Shortcuts:[/bold]
 r - Refresh    c - Create user    C - Copy user
+G - Create group
 a - Attributes g - Groups         p - Password
 d - Delete     y - Copy DN        u - Undo
 U - Unlock     ? - Help           / - Search
@@ -740,7 +791,7 @@ U - Unlock     ? - Help           / - Search
 
     def _handle_logout(self, args: str) -> None:
         """Handle logout/disconnect command to return to login screen."""
-        if hasattr(self.app, 'action_logout'):
+        if hasattr(self.app, "action_logout"):
             self.app.action_logout()
         else:
             self.app.notify("Logout not available in this mode", severity="warning")

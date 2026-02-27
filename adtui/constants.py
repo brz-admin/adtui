@@ -145,6 +145,8 @@ COMMAND_ALIASES = {
     "r": "refresh",
     # Copy user commands
     "cp": "copyuser",
+    # Group creation commands
+    "cg": "creategroup",
     # Attributes commands
     "a": "attributes",
     "attr": "attributes",
@@ -243,6 +245,8 @@ MESSAGES = {
     "CREATE_USER_FAILED": "Failed to create user account: {error}",
     "COPY_USER_SUCCESS": "Successfully copied user account",
     "COPY_USER_FAILED": "Failed to copy user account: {error}",
+    "CREATE_GROUP_SUCCESS": "Successfully created group",
+    "CREATE_GROUP_FAILED": "Failed to create group: {error}",
     "NO_TARGET_OU": "No target OU specified or selected",
 }
 

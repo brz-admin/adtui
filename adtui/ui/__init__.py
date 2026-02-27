@@ -6,14 +6,16 @@ from .dialogs import (
     ConfirmMoveDialog,
     ConfirmRestoreDialog,
     ConfirmUndoDialog,
-    CreateOUDialog
+    CreateOUDialog,
+    CreateGroupDialog,
 )
 
 __all__ = [
-    'BaseConfirmDialog',
-    'ConfirmDeleteDialog',
-    'ConfirmMoveDialog',
-    'ConfirmRestoreDialog',
-    'ConfirmUndoDialog',
-    'CreateOUDialog'
+    "BaseConfirmDialog",
+    "ConfirmDeleteDialog",
+    "ConfirmMoveDialog",
+    "ConfirmRestoreDialog",
+    "ConfirmUndoDialog",
+    "CreateOUDialog",
+    "CreateGroupDialog",
 ]

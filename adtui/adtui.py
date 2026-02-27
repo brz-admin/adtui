@@ -135,6 +135,7 @@ class ADTUI(App):
         Binding("/", "search_mode", "Search", show=True),
         Binding("r", "refresh_ou", "Refresh OU", show=True),
         Binding("c", "create_user", "Create User", show=True),
+        Binding("G", "create_group", "Create Group", show=False),
         # User-specific commands - hidden from footer but still functional
         Binding("a", "edit_attributes", "Attributes", show=False),
         Binding("g", "manage_groups", "Groups", show=False),
@@ -1223,6 +1224,49 @@ class ADTUI(App):
         except Exception as e:
             self.notify(f"Error undoing copy user: {e}", severity=Severity.ERROR.value)
 
+    def handle_create_group_confirmation(self, result):
+        """Handle create group confirmation result."""
+        if result and result.get("success"):
+            # Add to history for undo
+            self.history_service.add(
+                "create_group",
+                {
+                    "group_dn": result["group_dn"],
+                    "group_name": result["group_name"],
+                },
+            )
+
+            # Refresh tree to show new group
+            self.action_refresh_ou()
+
+            # Navigate to and select new group
+            self.set_timer(0.5, lambda: self.expand_tree_to_dn(result["group_dn"]))
+        elif result:
+            # User cancelled dialog
+            pass
+
+    def undo_create_group(self, operation):
+        """Undo create group operation."""
+        try:
+            group_dn = operation.details["group_dn"]
+            success, message = self.ldap_service.delete_object(group_dn)
+
+            if success:
+                self.notify(
+                    f"Undid: Created group {operation.details['group_name']}",
+                    severity=Severity.INFORMATION.value,
+                )
+                self.action_refresh_ou()
+            else:
+                self.notify(
+                    f"Failed to undo create group: {message}",
+                    severity=Severity.ERROR.value,
+                )
+        except Exception as e:
+            self.notify(
+                f"Error undoing create group: {e}", severity=Severity.ERROR.value
+            )
+
     def action_create_user(self):
         """Create new user account."""
         from .ui.dialogs import CreateUserDialog
@@ -1235,6 +1279,20 @@ class ADTUI(App):
         self.push_screen(
             CreateUserDialog(target_ou, self.ldap_service),
             self.handle_create_user_confirmation,
+        )
+
+    def action_create_group(self):
+        """Create new AD group."""
+        from .ui.dialogs import CreateGroupDialog
+
+        # Use current selected OU or base DN
+        target_ou = self._get_current_ou()
+        if not target_ou:
+            target_ou = self.ldap_service.base_dn if self.ldap_service else self.base_dn
+
+        self.push_screen(
+            CreateGroupDialog(target_ou, self.ldap_service),
+            self.handle_create_group_confirmation,
         )
 
     def action_copy_user(self):

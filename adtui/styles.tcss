@@ -180,7 +180,7 @@ LoginDialog #dialog-buttons Button {
     padding: 1;
 }
 
-CreateUserDialog #dialog, CopyUserDialog #dialog {
+CreateUserDialog #dialog, CopyUserDialog #dialog, CreateGroupDialog #dialog {
     width: 80;
     max-height: 40;
 }
