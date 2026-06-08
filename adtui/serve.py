@@ -273,6 +273,9 @@ app = ADTUIServeApp
 
 def main():
     """Entry point for python -m adtui.serve"""
+    from .services.logging_service import setup_logging
+
+    setup_logging()
     app_instance = ADTUIServeApp()
     app_instance.run()
 

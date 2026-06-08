@@ -1677,6 +1677,14 @@ def main():
     import os
     from pathlib import Path
 
+    # Configure file-based logging before anything else so errors and
+    # uncaught crashes are persisted (the TUI hides stderr while running).
+    try:
+        from .services.logging_service import setup_logging
+    except ImportError:
+        from services.logging_service import setup_logging
+    setup_logging()
+
     from . import __version__
 
     # Parse command-line arguments before starting Textual
@@ -1918,7 +1926,7 @@ def main():
                     # Normal exit - break the loop
                     break
             except Exception as e:
-                logger.error("Error running application: %s", e)
+                logger.exception("Error running application: %s", e)
                 break
         else:
             # No credentials provided, exit

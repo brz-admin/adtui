@@ -12,8 +12,7 @@ try:
 except ImportError:
     from services.config_service import ADConfig
 
-# Configure logging - use WARNING level to suppress info messages on quit
-logging.basicConfig(level=logging.WARNING)
+# Logging is configured centrally in logging_service.setup_logging().
 logger = logging.getLogger(__name__)
 
 
