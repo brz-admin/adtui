@@ -1225,20 +1225,39 @@ class LDAPService:
                 # Step 2: Set password using Microsoft extension (proper AD method)
                 pwd_result = conn.extend.microsoft.modify_password(user_dn, password)
                 if not pwd_result:
-                    # Try to clean up the created user
-                    conn.delete(user_dn)
                     error_msg = conn.result.get("message", "Unknown error")
-                    return False, f"Failed to set password: {error_msg}", ""
+                    logger.error("modify_password failed: %s", error_msg)
+                    # Fallback: try setting unicodePwd directly
+                    encoded_pwd = ('"%s"' % password).encode("utf-16-le")
+                    conn.modify(
+                        user_dn,
+                        {"unicodePwd": [(MODIFY_REPLACE, [encoded_pwd])]},
+                    )
+                    if conn.result["result"] != 0:
+                        # Both methods failed, clean up
+                        conn.delete(user_dn)
+                        return False, f"Failed to set password: {error_msg}", ""
+                    logger.info("Password set via unicodePwd fallback")
 
                 # Step 3: Apply final UAC (enable account if not disabled)
                 conn.modify(
                     user_dn,
                     {"userAccountControl": [(MODIFY_REPLACE, [str(final_uac)])]},
                 )
+                if conn.result["result"] != 0:
+                    logger.error(
+                        "Failed to set userAccountControl: %s",
+                        conn.result.get("message", "Unknown error"),
+                    )
 
                 # Step 4: If user must change password at next logon, set pwdLastSet to 0
                 if user_must_change_password:
                     conn.modify(user_dn, {"pwdLastSet": [(MODIFY_REPLACE, ["0"])]})
+                    if conn.result["result"] != 0:
+                        logger.error(
+                            "Failed to set pwdLastSet: %s",
+                            conn.result.get("message", "Unknown error"),
+                        )
 
                 return True, f"Successfully created user: {full_name}", user_dn
 

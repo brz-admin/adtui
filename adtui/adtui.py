@@ -52,7 +52,11 @@ except ImportError:
 from .constants import Severity, MESSAGES
 
 # Configuration will be loaded after AD selection
-LAST_USER_FILE = "last_user.txt"
+from .services.platform_service import PlatformService
+
+_config_dir = PlatformService.get_config_dir()
+_config_dir.mkdir(parents=True, exist_ok=True)
+LAST_USER_FILE = str(_config_dir / "last_user.txt")
 
 last_user = ""
 if os.path.exists(LAST_USER_FILE):
