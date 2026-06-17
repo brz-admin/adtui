@@ -781,7 +781,8 @@ r - Refresh    c - Create user    C - Copy user
 G - Create group
 a - Attributes g - Groups         p - Password
 d - Delete     y - Copy DN        u - Undo
-U - Unlock     ? - Help           / - Search
+e - Enable/Disable                U - Unlock
+? - Help       / - Search
 """
         self.app.notify(help_text, timeout=15)
 

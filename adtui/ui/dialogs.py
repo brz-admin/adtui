@@ -1521,6 +1521,13 @@ class CopyUserDialog(ModalScreen):
             copy_manager = self.query_one("#copy-manager", Checkbox).value
             copy_options = self.query_one("#copy-options", Checkbox).value
 
+            # Get account options
+            must_change = self.query_one("#must-change", Checkbox).value
+            cannot_change = self.query_one("#cannot-change", Checkbox).value
+            never_expires = self.query_one("#never-expires", Checkbox).value
+            disabled = self.query_one("#disabled", Checkbox).value
+            account_expires = self.query_one("#account-expires", Input).value.strip()
+
             # Copy user
             success, message, user_dn = self.ldap_service.copy_user(
                 source_dn=self.source_dn,
@@ -1531,6 +1538,11 @@ class CopyUserDialog(ModalScreen):
                 copy_groups=copy_groups,
                 copy_manager=copy_manager,
                 copy_account_options=copy_options,
+                user_must_change_password=must_change,
+                user_cannot_change_password=cannot_change,
+                password_never_expires=never_expires,
+                account_disabled=disabled,
+                account_expires=account_expires,
             )
 
             if success:

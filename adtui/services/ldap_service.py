@@ -1257,6 +1257,11 @@ class LDAPService:
         copy_groups: bool = False,
         copy_manager: bool = False,
         copy_account_options: bool = False,
+        user_must_change_password: bool = True,
+        user_cannot_change_password: bool = False,
+        password_never_expires: bool = False,
+        account_disabled: bool = False,
+        account_expires: str = "",
     ) -> Tuple[bool, str, str]:
         """Copy an existing user account.
 
@@ -1268,7 +1273,12 @@ class LDAPService:
             target_ou_dn: Target OU DN
             copy_groups: Copy group memberships
             copy_manager: Copy manager relationship
-            copy_account_options: Copy account options
+            copy_account_options: Copy account options from source user
+            user_must_change_password: User must change password at next logon
+            user_cannot_change_password: User cannot change password
+            password_never_expires: Password never expires
+            account_disabled: Account is disabled
+            account_expires: Account expiry date (optional)
 
         Returns:
             Tuple of (success: bool, message: str, new_user_dn: str)
@@ -1312,12 +1322,7 @@ class LDAPService:
                 str(source_entry.sn.value) if hasattr(source_entry, "sn") else ""
             )
 
-            # Determine account options from source if requested
-            user_must_change_password = True  # Default for new users
-            user_cannot_change_password = False
-            password_never_expires = False
-            account_disabled = False
-
+            # Override account options from source if requested
             if copy_account_options and hasattr(source_entry, "userAccountControl"):
                 source_uac = int(source_entry.userAccountControl.value)
                 user_cannot_change_password = (source_uac & 0x40) != 0
@@ -1336,6 +1341,7 @@ class LDAPService:
                 user_cannot_change_password,
                 password_never_expires,
                 account_disabled,
+                account_expires,
             )
 
             if not success:

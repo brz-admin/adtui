@@ -487,7 +487,7 @@ Last Login: {last_login_display}
         else:
             content += "  No group memberships\n"
 
-        content += "\n[dim]Press 'a' to edit attributes | 'g' to manage groups | 'p' to set password | 'e' to enable account[/dim]"
+        content += "\n[dim]Press 'a' to edit attributes | 'g' to manage groups | 'p' to set password | 'e' to enable/disable account[/dim]"
 
         return content
 

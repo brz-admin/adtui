@@ -145,6 +145,7 @@ class ADTUI(App):
         Binding("ctrl+c", "copy_selection", "Copy Selection", show=True),
         Binding("d", "delete_object", "Delete", show=False),
         Binding("u", "undo", "Undo", show=False),
+        Binding("e", "enable_disable_user", "Enable/Disable", show=False),
         Binding("U", "unlock_user", "Unlock", show=False),
         Binding("?", "show_help", "Help", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
@@ -1101,6 +1102,73 @@ class ADTUI(App):
                 self.notify(
                     f"Error unlocking account: {e}", severity=Severity.ERROR.value
                 )
+
+    def action_enable_disable_user(self):
+        """Toggle enable/disable on the selected user account."""
+        if not self.current_selected_dn:
+            self.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+
+        if not self._is_user_object(self.current_selected_dn):
+            self.notify(
+                "Enable/Disable can only be performed on user accounts",
+                severity=Severity.WARNING.value,
+            )
+            return
+
+        # Check current account status to determine whether to enable or disable
+        try:
+
+            def check_status(conn):
+                conn.search(
+                    self.current_selected_dn,
+                    "(objectClass=user)",
+                    search_scope="BASE",
+                    attributes=["userAccountControl"],
+                )
+                if not conn.entries:
+                    return None
+                entry = conn.entries[0]
+                if (
+                    hasattr(entry, "userAccountControl")
+                    and entry.userAccountControl.value
+                ):
+                    return int(entry.userAccountControl.value)
+                return 0
+
+            current_uac = self.ldap_service.connection_manager.execute_with_retry(
+                check_status
+            )
+
+            if current_uac is None:
+                self.notify("User not found", severity=Severity.ERROR.value)
+                return
+
+            is_disabled = bool(current_uac & 0x0002)
+        except Exception as e:
+            self.notify(
+                f"Error checking account status: {e}", severity=Severity.ERROR.value
+            )
+            return
+
+        if is_disabled:
+            from ui.dialogs import ConfirmEnableDialog
+
+            self.push_screen(
+                ConfirmEnableDialog(
+                    self.current_selected_label, self.current_selected_dn
+                ),
+                self.handle_enable_confirmation,
+            )
+        else:
+            from ui.dialogs import ConfirmDisableDialog
+
+            self.push_screen(
+                ConfirmDisableDialog(
+                    self.current_selected_label, self.current_selected_dn
+                ),
+                self.handle_disable_confirmation,
+            )
 
     def handle_enable_confirmation(self, confirmed: bool):
         """Handle enable confirmation result."""
