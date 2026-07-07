@@ -376,7 +376,7 @@ class ManageGroupsDialog(ModalScreen):
 
         yield Vertical(
             Static(
-                f"[bold cyan]Group Memberships: {cn}[/bold cyan]\n\nMember of {len(self.user_details.member_of) if self.user_details else 0} groups\n[dim]Delete: Remove | A: Add | Esc: Close[/dim]\n",
+                f"[bold cyan]Group Memberships: {cn}[/bold cyan]\n\nMember of {len(self.user_details.member_of) if self.user_details else 0} groups\n[dim]Enter: Add/Remove | A: Search | Esc: Close[/dim]\n",
                 id="question",
             ),
             Input(placeholder="Search groups to add...", id="group-search"),
@@ -394,9 +394,12 @@ class ManageGroupsDialog(ModalScreen):
         """Populate the groups list after mounting."""
         groups_list = self.query_one("#groups-list", ListView)
         if self.user_details and self.user_details.member_of:
-            for group in self.user_details.member_of:
+            sorted_groups = sorted(
+                self.user_details.member_of, key=lambda g: g["name"].lower()
+            )
+            for group in sorted_groups:
                 item = ListItem(Label(group["name"]))
-                self.groups_data[id(item)] = group
+                self.groups_data[id(item)] = {**group, "is_member": True}
                 groups_list.append(item)
         groups_list.focus()
 
@@ -410,9 +413,12 @@ class ManageGroupsDialog(ModalScreen):
         self.groups_data.clear()
 
         if self.user_details and self.user_details.member_of:
-            for group in self.user_details.member_of:
+            sorted_groups = sorted(
+                self.user_details.member_of, key=lambda g: g["name"].lower()
+            )
+            for group in sorted_groups:
                 item = ListItem(Label(group["name"]))
-                self.groups_data[id(item)] = group
+                self.groups_data[id(item)] = {**group, "is_member": True}
                 groups_list.append(item)
 
         # Update the header with current count
@@ -423,7 +429,7 @@ class ManageGroupsDialog(ModalScreen):
             else "User"
         )
         header.update(
-            f"[bold cyan]Group Memberships: {cn}[/bold cyan]\n\nMember of {len(self.user_details.member_of) if self.user_details else 0} groups\n[dim]Delete: Remove | A: Add | Esc: Close[/dim]\n"
+            f"[bold cyan]Group Memberships: {cn}[/bold cyan]\n\nMember of {len(self.user_details.member_of) if self.user_details else 0} groups\n[dim]Enter: Add/Remove | A: Search | Esc: Close[/dim]\n"
         )
 
     def _update_user_details(self) -> None:
@@ -482,15 +488,8 @@ class ManageGroupsDialog(ModalScreen):
             if len(query) >= 2:
                 self._search_groups(query)
             elif len(query) == 0:
-                # Clear search results
-                groups_list = self.query_one("#groups-list", ListView)
-                groups_list.clear()
-                # Repopulate with current memberships
-                if self.user_details and self.user_details.member_of:
-                    for group in self.user_details.member_of:
-                        item = ListItem(Label(group["name"]))
-                        self.groups_data[id(item)] = group
-                        groups_list.append(item)
+                # Clear search results and show membership list
+                self._refresh_groups_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in search input."""
@@ -581,12 +580,15 @@ class ManageGroupsDialog(ModalScreen):
             self.dismiss()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Add to selected group from search results."""
+        """Add to or remove from selected group."""
         if event.list_view.id == "groups-list":
             item = event.item
             group_data = self.groups_data.get(id(item))
-            if group_data and not group_data.get("is_member", False):
-                self._add_to_group(group_data)
+            if group_data:
+                if group_data.get("is_member", False):
+                    self._remove_from_group(group_data)
+                else:
+                    self._add_to_group(group_data)
 
     def _add_group_by_name(self, group_name: str) -> None:
         """Add user to group by search then selection."""
@@ -604,16 +606,44 @@ class ManageGroupsDialog(ModalScreen):
             self.connection_manager.execute_with_retry(add_to_group_op)
             self.app.notify(f"Added to {group_data['name']}", severity="information")
 
-            # Update user details and refresh list
+            # Update user details
             self._update_user_details()
-            self._refresh_groups_list()
 
-            # Clear search input
+            # Re-run current search to keep results visible with updated membership
             search_input = self.query_one("#group-search", Input)
-            search_input.value = ""
-            search_input.focus()
+            query = search_input.value.strip()
+            if query:
+                self._search_groups(query)
+            else:
+                self._refresh_groups_list()
         except Exception as e:
             self.app.notify(f"Error adding to group: {e}", severity="error")
+
+    def _remove_from_group(self, group_data: dict) -> None:
+        """Remove user from specified group."""
+        try:
+            from ldap3 import MODIFY_DELETE
+
+            def remove_group_op(conn):
+                conn.modify(group_data["dn"], {"member": [(MODIFY_DELETE, [self.dn])]})
+
+            self.connection_manager.execute_with_retry(remove_group_op)
+            self.app.notify(
+                f"Removed from {group_data['name']}", severity="information"
+            )
+
+            # Update user details
+            self._update_user_details()
+
+            # Re-run current search to keep results visible with updated membership
+            search_input = self.query_one("#group-search", Input)
+            query = search_input.value.strip()
+            if query:
+                self._search_groups(query)
+            else:
+                self._refresh_groups_list()
+        except Exception as e:
+            self.app.notify(f"Error removing from group: {e}", severity="error")
 
 
 class ManageGroupMembersDialog(ModalScreen):
