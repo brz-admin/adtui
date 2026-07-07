@@ -482,7 +482,7 @@ Last Login: {last_login_display}
 """
 
         if self.member_of:
-            for group in self.member_of:
+            for group in sorted(self.member_of, key=lambda g: g["name"].lower()):
                 content += f"  • {group['name']}\n"
         else:
             content += "  No group memberships\n"
