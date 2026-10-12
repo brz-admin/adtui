@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 try:
     from .adtree import ADTree
     from .widgets.details_pane import DetailsPane
+    from .widgets.page_list_view import PageListView
     from .services import LDAPService, HistoryService, PathService
     from .services.config_service import ConfigService, ADConfig
     from .services.connection_manager import ConnectionManager, ConnectionState
@@ -35,6 +36,7 @@ except ImportError:
     # Fallback for direct execution
     from adtree import ADTree
     from widgets.details_pane import DetailsPane
+    from widgets.page_list_view import PageListView
     from services import LDAPService, HistoryService, PathService
     from services.config_service import ConfigService, ADConfig
     from services.connection_manager import ConnectionManager, ConnectionState
@@ -103,7 +105,7 @@ def create_connection_manager(
     return manager
 
 
-class SearchResultsPane(ListView):
+class SearchResultsPane(PageListView):
     """ListView for displaying search results."""
 
     def __init__(self, *args, **kwargs):

@@ -30,6 +30,11 @@ from textual.widgets import (
     RadioSet,
 )
 
+try:
+    from widgets.page_list_view import PageListView
+except ImportError:
+    from .widgets.page_list_view import PageListView  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -609,7 +614,7 @@ class ManageGroupsDialog(ModalScreen):
                 id="question",
             ),
             Input(placeholder="Search groups to add...", id="group-search"),
-            ListView(id="groups-list"),
+            PageListView(id="groups-list"),
             Horizontal(
                 Button("Add Group", variant="success", id="add"),
                 Button("Remove", variant="error", id="remove"),
@@ -900,7 +905,7 @@ class ManageGroupMembersDialog(ModalScreen):
                 f"[bold cyan]Group Members: {cn}[/bold cyan]\n\nMembers ({len(self.group_details.members) if self.group_details else 0})\n[dim]Esc: Close[/dim]\n",
                 id="question",
             ),
-            ListView(id="members-list"),
+            PageListView(id="members-list"),
             Horizontal(
                 Button("Close", variant="primary", id="close"), id="dialog-buttons"
             ),
@@ -937,7 +942,7 @@ class EditAttributesDialog(ModalScreen):
                 f"[bold cyan]All Attributes[/bold cyan]\n{self.dn}\n[dim]Select attribute and press Enter to edit | Esc: Close[/dim]\n",
                 id="question",
             ),
-            ListView(id="attributes-list"),
+            PageListView(id="attributes-list"),
             Horizontal(
                 Button("Close", variant="primary", id="close"), id="dialog-buttons"
             ),
@@ -1891,7 +1896,7 @@ class ADSelectionDialog(ModalScreen[str]):
             Static(
                 "[bold cyan]Select Active Directory Domain[/bold cyan]\n", id="question"
             ),
-            ListView(id="domains-list"),
+            PageListView(id="domains-list"),
             Static("", id="domain-info"),
             Horizontal(
                 Button("Select", variant="success", id="select"),
