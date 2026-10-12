@@ -84,6 +84,8 @@ class CommandHandler:
             "password": self._handle_password,
             "passwd": self._handle_password,
             "p": self._handle_password,
+            # UPN (logon name) command
+            "upn": self._handle_upn,
             # Help command
             "help": self._handle_help,
             "h": self._handle_help,
@@ -621,6 +623,19 @@ class CommandHandler:
             return
         self.app.action_set_password()
 
+    def _handle_upn(self, args: str) -> None:
+        """Handle UPN (logon name) edit command."""
+        if not self.app.current_selected_dn:
+            self.app.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+        if not self._is_user_object(self.app.current_selected_dn):
+            self.app.notify(
+                "Logon name can only be edited for user accounts",
+                severity=Severity.WARNING.value,
+            )
+            return
+        self.app.action_edit_upn()
+
     def _handle_version(self, args: str) -> None:
         """Handle version command."""
         try:
@@ -747,6 +762,7 @@ class CommandHandler:
 :d, :del         - Delete selected object
 :m <path>        - Move to path with autocomplete
 :a, :attr        - View/edit attributes
+:l, :upn         - Edit logon name (UPN)
 :g, :groups      - Manage group memberships
 :p, :passwd      - Set password
 
@@ -779,9 +795,9 @@ class CommandHandler:
 [bold]Keyboard Shortcuts:[/bold]
 r - Refresh    c - Create user    C - Copy user
 G - Create group
-a - Attributes g - Groups         p - Password
-d - Delete     y - Copy DN        u - Undo
-e - Enable/Disable                U - Unlock
+a - Attributes l - Logon (UPN)    g - Groups
+p - Password   d - Delete         y - Copy DN
+u - Undo       e - Enable/Disable U - Unlock
 ? - Help       / - Search
 """
         self.app.notify(help_text, timeout=15)

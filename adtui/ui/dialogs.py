@@ -20,6 +20,7 @@ from textual.widgets import (
     Static,
     Button,
     Input,
+    Select,
     ListView,
     ListItem,
     Label,
@@ -346,6 +347,234 @@ class EditUserDialog(ModalScreen):
                 self.dismiss(True)
             except Exception as e:
                 self.app.notify(f"Error updating user: {e}", severity="error")
+        else:
+            self.dismiss(False)
+
+
+class EditUPNDialog(ModalScreen):
+    """Dialog to edit the user logon name (userPrincipalName).
+
+    Mirrors the ADUC "Account" tab: a logon name plus a @suffix selector.
+    """
+
+    def __init__(
+        self,
+        dn: str,
+        connection_manager,
+        current_upn: str = "",
+        base_dn: str = "",
+    ):
+        super().__init__()
+        self.dn = dn
+        self.connection_manager = connection_manager
+        self.base_dn = base_dn
+        self.current_upn = current_upn
+        self.suffixes: List[str] = []
+
+        if "@" in current_upn:
+            self.upn_local, self.upn_suffix = current_upn.rsplit("@", 1)
+        else:
+            self.upn_local, self.upn_suffix = current_upn, ""
+
+    @staticmethod
+    def _dn_to_domain(dn: str) -> str:
+        """Convert a DC= DN to a DNS domain name (DC=domman,DC=ad -> domman.ad)."""
+        parts = []
+        for component in dn.split(","):
+            if "=" in component and component.split("=", 1)[0].strip().upper() == "DC":
+                parts.append(component.split("=", 1)[1].strip())
+        return ".".join(parts)
+
+    def compose(self) -> ComposeResult:
+        cn = self.dn.split(",")[0].split("=")[1] if "," in self.dn else self.dn
+        yield Vertical(
+            Static(
+                f"[bold cyan]Edit Logon Name (UPN): {cn}[/bold cyan]\n",
+                id="question",
+            ),
+            Static("Logon name:"),
+            Input(
+                placeholder="Logon name (part before the @)",
+                id="upn-local",
+                value=self.upn_local,
+            ),
+            Static("UPN suffix (@domain):"),
+            Select([], id="upn-suffix"),
+            Static(""),  # Spacer
+            Horizontal(
+                Button("Save", variant="success", id="save"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-buttons",
+            ),
+            id="dialog",
+        )
+
+    def on_mount(self) -> None:
+        """Focus logon name input and load UPN suffixes from AD."""
+        self.query_one("#upn-local", Input).focus()
+        self._load_suffixes()
+
+    def _load_suffixes(self) -> None:
+        """Build the suffix list: default domain + forest UPN suffixes.
+
+        Falls back to the current UPN suffix, then to base_dn if the
+        lookup fails - the dialog must stay usable either way.
+        """
+        from ldap3.utils.conv import escape_filter_chars
+
+        def load_suffixes_op(conn: Connection):
+            # RootDSE gives the default and configuration naming contexts
+            conn.search(
+                "",
+                "(objectClass=*)",
+                search_scope="BASE",
+                attributes=["defaultNamingContext", "configurationNamingContext"],
+            )
+            if not conn.entries:
+                return []
+
+            entry = conn.entries[0]
+            result = []
+
+            default_nc = (
+                str(entry.defaultNamingContext.value)
+                if hasattr(entry, "defaultNamingContext")
+                and entry.defaultNamingContext.value
+                else ""
+            )
+            config_nc = (
+                str(entry.configurationNamingContext.value)
+                if hasattr(entry, "configurationNamingContext")
+                and entry.configurationNamingContext.value
+                else ""
+            )
+
+            # Default domain DNS name
+            if default_nc:
+                domain = self._dn_to_domain(default_nc)
+                if domain:
+                    result.append(domain)
+
+            # Alternate UPN suffixes from the forest partitions container
+            if config_nc:
+                conn.search(
+                    f"CN=Partitions,{config_nc}",
+                    "(objectClass=crossRef)",
+                    search_scope="LEVEL",
+                    attributes=["upnSuffixes"],
+                )
+                for e in conn.entries:
+                    if hasattr(e, "upnSuffixes") and e.upnSuffixes.values:
+                        result.extend(str(v) for v in e.upnSuffixes.values)
+
+            return result
+
+        suffixes = []
+        try:
+            suffixes = self.connection_manager.execute_with_retry(load_suffixes_op) or []
+        except Exception as e:
+            logger.debug("Could not load UPN suffixes: %s", e)
+
+        # Always keep the current suffix as an option
+        if self.upn_suffix and self.upn_suffix not in suffixes:
+            suffixes.insert(0, self.upn_suffix)
+
+        # Fallback: derive from base_dn
+        if not suffixes and self.base_dn:
+            domain = self._dn_to_domain(self.base_dn)
+            if domain:
+                suffixes.append(domain)
+
+        self.suffixes = suffixes
+
+        select = self.query_one("#upn-suffix", Select)
+        select.set_options([(f"@{s}", s) for s in suffixes])
+        if self.upn_suffix in suffixes:
+            select.value = self.upn_suffix
+        elif suffixes:
+            select.value = suffixes[0]
+
+    def _check_upn_available(self, upn: str) -> Tuple[bool, str]:
+        """Check that no other object already uses this UPN."""
+        from ldap3.utils.conv import escape_filter_chars
+
+        if not self.base_dn:
+            # Without a search base we cannot check - let AD enforce it
+            return True, ""
+
+        def check_upn_op(conn: Connection):
+            conn.search(
+                self.base_dn,
+                f"(userPrincipalName={escape_filter_chars(upn)})",
+                search_scope="SUBTREE",
+                attributes=["distinguishedName"],
+            )
+            if conn.entries:
+                existing = [
+                    e.distinguishedName.value
+                    for e in conn.entries
+                    if str(e.distinguishedName.value).lower() != self.dn.lower()
+                ]
+                if existing:
+                    return (
+                        False,
+                        f"Logon name '{upn}' already in use by: {existing[0]}",
+                    )
+            return True, ""
+
+        return self.connection_manager.execute_with_retry(check_upn_op)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            from ldap3 import MODIFY_REPLACE
+
+            local = self.query_one("#upn-local", Input).value.strip()
+            suffix = self.query_one("#upn-suffix", Select).value
+
+            if not local:
+                self.app.notify("Logon name cannot be empty", severity="warning")
+                return
+            if "@" in local:
+                self.app.notify(
+                    "Enter only the name part (without @domain)",
+                    severity="warning",
+                )
+                return
+            if not suffix:
+                self.app.notify("No UPN suffix available", severity="warning")
+                return
+
+            new_upn = f"{local}@{suffix}"
+
+            try:
+                # Duplicate UPNs are rejected forest-wide by AD - check first
+                available, message = self._check_upn_available(new_upn)
+                if not available:
+                    self.app.notify(message, severity="warning")
+                    return
+
+                def update_upn_op(conn: Connection):
+                    conn.modify(
+                        self.dn,
+                        {"userPrincipalName": [(MODIFY_REPLACE, [new_upn])]},
+                    )
+                    return conn.result
+
+                result = self.connection_manager.execute_with_retry(update_upn_op)
+                if result["result"] == 0:
+                    self.app.notify(
+                        f"Logon name updated to {new_upn}", severity="information"
+                    )
+                    self.dismiss(True)
+                else:
+                    error_msg = result.get("message", "Unknown error")
+                    error_desc = result.get("description", "No description")
+                    self.app.notify(
+                        f"Error updating logon name: {error_desc} - {error_msg}",
+                        severity="error",
+                    )
+            except Exception as e:
+                self.app.notify(f"Error updating logon name: {e}", severity="error")
         else:
             self.dismiss(False)
 

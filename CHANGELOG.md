@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.4] - 2026-10-12
+
+### ✨ Features
+- Display the user logon name (userPrincipalName / UPN) in the user details pane
+- Edit the logon name (UPN) with a dedicated dialog mirroring the ADUC "Account" tab:
+  logon name field plus a @suffix selector loaded from the domain (default domain
+  and forest UPN suffixes)
+- New `l` shortcut and `:l, :upn` command to edit the UPN of the selected user
+- Duplicate UPN check before saving (AD rejects duplicates forest-wide)
+
 ## [2.1.0] - 2024-12-16
 
 ### 🎉 Packaging & Distribution

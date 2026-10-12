@@ -144,6 +144,8 @@ class ADTUI(App):
         Binding("a", "edit_attributes", "Attributes", show=False),
         Binding("g", "manage_groups", "Groups", show=False),
         Binding("p", "set_password", "Password", show=False),
+
+        Binding("l", "edit_upn", "Logon (UPN)", show=False),
         Binding("C", "copy_user", "Copy User", show=False),
         Binding("y", "copy_to_clipboard", "Copy Text", show=True),
         Binding("ctrl+c", "copy_selection", "Copy Selection", show=True),
@@ -438,6 +440,50 @@ class ADTUI(App):
             )
         else:
             self.notify("Password setting only available for users", severity="warning")
+
+    def action_edit_upn(self):
+        """Edit logon name (userPrincipalName) for selected user."""
+        if not self.current_selected_dn:
+            self.notify("No object selected", severity="warning")
+            return
+
+        if self.current_selected_label and "👤" in str(self.current_selected_label):
+            from .ui.dialogs import EditUPNDialog
+
+            # Need user details to get the current UPN
+            from widgets.user_details import UserDetailsPane
+
+            user_details = UserDetailsPane()
+            user_details.update_user_details(
+                self.current_selected_dn, self.connection_manager
+            )
+
+            current_upn = ""
+            if user_details.entry and hasattr(
+                user_details.entry, "userPrincipalName"
+            ):
+                value = user_details.entry.userPrincipalName.value
+                if value:
+                    current_upn = str(value)
+
+            self.push_screen(
+                EditUPNDialog(
+                    self.current_selected_dn,
+                    self.connection_manager,
+                    current_upn,
+                    self.base_dn,
+                ),
+                self.handle_upn_edit_result,
+            )
+        else:
+            self.notify(
+                "Logon name editing only available for users", severity="warning"
+            )
+
+    def handle_upn_edit_result(self, result):
+        """Refresh details pane after editing the UPN."""
+        if result and hasattr(self, "details") and self.details:
+            self.details.refresh_details()
 
     def action_delete_object(self):
         """Delete selected object."""

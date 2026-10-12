@@ -28,6 +28,7 @@ class DetailsPane(SelectableStatic):
 
     BINDINGS = [
         Binding("a", "view_attributes", "Attributes", show=True),
+        Binding("l", "edit_upn", "Logon (UPN)", show=True),
         Binding("g", "manage_groups", "Groups", show=True),
         Binding("p", "set_password", "Password", show=True),
     ]
@@ -122,6 +123,41 @@ class DetailsPane(SelectableStatic):
                 "Group management not supported for this object type",
                 severity="warning",
             )
+
+    def action_edit_upn(self):
+        """Handle edit logon name (UPN) action."""
+        if not self.current_dn:
+            self.app.notify("No object selected", severity="warning")
+            return
+
+        if self.current_type != "user":
+            self.app.notify(
+                "Logon name editing only available for users", severity="warning"
+            )
+            return
+
+        from ui.dialogs import EditUPNDialog
+
+        current_upn = ""
+        if self.user_details and self.user_details.entry:
+            entry = self.user_details.entry
+            if hasattr(entry, "userPrincipalName") and entry.userPrincipalName.value:
+                current_upn = str(entry.userPrincipalName.value)
+
+        self.app.push_screen(
+            EditUPNDialog(
+                self.current_dn,
+                self.current_connection_manager,
+                current_upn,
+                self.app.base_dn,
+            ),
+            self._refresh_after_upn_edit,
+        )
+
+    def _refresh_after_upn_edit(self, result) -> None:
+        """Refresh user details after editing the UPN."""
+        if result:
+            self.refresh_details()
 
     def action_view_attributes(self):
         """Handle view all attributes action - opens editable dialog."""

@@ -127,6 +127,12 @@ class UserDetailsPane(Static):
             if hasattr(self.entry, "sAMAccountName")
             else "N/A"
         )
+        upn = (
+            str(self.entry.userPrincipalName.value)
+            if hasattr(self.entry, "userPrincipalName")
+            and self.entry.userPrincipalName.value
+            else "N/A"
+        )
         display_name = (
             str(self.entry.displayName.value)
             if hasattr(self.entry, "displayName")
@@ -465,6 +471,7 @@ class UserDetailsPane(Static):
 
 [bold]General Information:[/bold]
 Common Name: {cn}
+Logon Name (UPN): {upn}
 Username (sAMAccountName): {sam}
 Display Name: {display_name}
 Email: {mail}
@@ -487,7 +494,7 @@ Last Login: {last_login_display}
         else:
             content += "  No group memberships\n"
 
-        content += "\n[dim]Press 'a' to edit attributes | 'g' to manage groups | 'p' to set password | 'e' to enable/disable account[/dim]"
+        content += "\n[dim]Press 'a' to edit attributes | 'l' to edit logon name (UPN) | 'g' to manage groups | 'p' to set password | 'e' to enable/disable account[/dim]"
 
         return content
 

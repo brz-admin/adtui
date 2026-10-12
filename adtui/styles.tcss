@@ -145,8 +145,13 @@ ListView:focus > ListItem.--highlight {
 }
 
 /* Edit dialog inputs */
-EditUserDialog Input, EditAttributesDialog Input {
+EditUserDialog Input, EditAttributesDialog Input, EditUPNDialog Input {
     margin: 1;
+}
+
+EditUPNDialog Select {
+    margin: 1;
+    width: 100%;
 }
 
 /* Login dialog specific styles */
