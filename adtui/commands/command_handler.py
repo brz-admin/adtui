@@ -64,6 +64,8 @@ class CommandHandler:
             "cu": self._handle_create_user,
             "copyuser": self._handle_copy_user,
             "cp": self._handle_copy_user,
+            "copygroups": self._handle_copy_groups,
+            "cpg": self._handle_copy_groups,
             # Group creation commands
             "creategroup": self._handle_create_group,
             "cg": self._handle_create_group,
@@ -404,6 +406,84 @@ class CommandHandler:
         self.app.push_screen(
             CopyUserDialog(source_dn, source_label, target_ou, self.app.ldap_service),
             self.app.handle_copy_user_confirmation,
+        )
+
+    def _handle_copy_groups(self, args: str) -> None:
+        """Handle copy groups command: apply a user's groups to the selected user."""
+        from ui.dialogs import ConfirmCopyGroupsDialog
+
+        target_dn = self.app.current_selected_dn
+        if not target_dn:
+            self.app.notify(MESSAGES["NO_SELECTION"], severity=Severity.WARNING.value)
+            return
+        if not self._is_user_object(target_dn):
+            self.app.notify(
+                "Groups can only be copied to user accounts",
+                severity=Severity.WARNING.value,
+            )
+            return
+
+        query = args.strip()
+        if not query:
+            self.app.notify(
+                "Usage: :copygroups <source user name or DN>",
+                severity=Severity.WARNING.value,
+            )
+            return
+
+        if "=" in query:
+            source_dn = query
+            source_label = query.split(",")[0].split("=")[1]
+        else:
+            try:
+                matches = self.app.ldap_service.search_objects(query, ["user"])
+            except Exception as e:
+                self.app.notify(str(e), severity=Severity.ERROR.value)
+                return
+            exact = [m for m in matches if m["cn"].lower() == query.lower()]
+            matches = exact or matches
+            if not matches:
+                self.app.notify(
+                    f"No user found matching '{query}'", severity=Severity.WARNING.value
+                )
+                return
+            if len(matches) > 1:
+                self.app.notify(
+                    f"{len(matches)} users match '{query}'; be more specific or use a DN",
+                    severity=Severity.WARNING.value,
+                )
+                return
+            source_dn = matches[0]["dn"]
+            source_label = matches[0]["cn"]
+
+        if source_dn.lower() == target_dn.lower():
+            self.app.notify(
+                "Source and target are the same user", severity=Severity.WARNING.value
+            )
+            return
+
+        try:
+            group_count = len(self.app.ldap_service.get_member_of(source_dn))
+        except Exception as e:
+            self.app.notify(
+                f"Could not read groups of {source_label}: {e}",
+                severity=Severity.ERROR.value,
+            )
+            return
+        if group_count == 0:
+            self.app.notify(
+                f"{source_label} is not a member of any groups",
+                severity=Severity.WARNING.value,
+            )
+            return
+
+        self.app.push_screen(
+            ConfirmCopyGroupsDialog(
+                source_label, self.app.current_selected_label, group_count
+            ),
+            lambda confirmed: self.app.handle_copy_groups_confirmation(
+                confirmed, source_dn, target_dn
+            ),
         )
 
     def _get_current_ou(self) -> str:
@@ -772,6 +852,7 @@ class CommandHandler:
 :dis, :disable   - Disable enabled user account
 :cu, :createuser - Create new user account
 :cp, :copyuser   - Copy user account
+:cpg <user>      - Add selected user to all groups of <user>
 
 [bold]Group Management:[/bold]
 :cg, :creategroup - Create new group

@@ -1155,6 +1155,22 @@ class ADTUI(App):
                     f"Error unlocking account: {e}", severity=Severity.ERROR.value
                 )
 
+    def handle_copy_groups_confirmation(
+        self, confirmed: bool, source_dn: str, target_dn: str
+    ):
+        """Handle copy groups confirmation result."""
+        if not confirmed:
+            return
+        try:
+            success, message, _added = self.ldap_service.copy_groups(
+                source_dn, target_dn
+            )
+            severity = Severity.INFORMATION if success else Severity.ERROR
+            self.notify(message, severity=severity.value)
+            self.refresh_current_view()
+        except Exception as e:
+            self.notify(f"Error copying groups: {e}", severity=Severity.ERROR.value)
+
     def action_enable_disable_user(self):
         """Toggle enable/disable on the selected user account."""
         if not self.current_selected_dn:

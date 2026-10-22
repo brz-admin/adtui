@@ -122,6 +122,22 @@ class ConfirmRestoreDialog(BaseConfirmDialog):
         )
 
 
+class ConfirmCopyGroupsDialog(BaseConfirmDialog):
+    """Dialog to confirm copying group memberships between users."""
+
+    def __init__(self, source_label: str, target_label: str, group_count: int):
+        super().__init__(
+            title="[bold cyan]Copy Group Memberships[/bold cyan]",
+            message=(
+                f"Add [bold]{target_label}[/bold] to the {group_count} group(s) "
+                f"that [bold]{source_label}[/bold] belongs to?\n\n"
+                f"Existing memberships are kept."
+            ),
+            confirm_text="Copy Groups",
+            confirm_variant="success",
+        )
+
+
 class ConfirmUndoDialog(BaseConfirmDialog):
     """Dialog to confirm undo operation."""
 

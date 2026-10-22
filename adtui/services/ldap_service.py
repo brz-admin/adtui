@@ -768,6 +768,70 @@ class LDAPService:
         except Exception as e:
             return False, f"Error joining group: {e}"
 
+    def get_member_of(self, object_dn: str) -> List[str]:
+        """Get the DNs of the groups an object is a direct member of.
+
+        Args:
+            object_dn: Distinguished Name of the object
+
+        Returns:
+            List of group DNs
+        """
+
+        def get_member_of_op(conn: Connection):
+            conn.search(
+                object_dn,
+                "(objectClass=*)",
+                search_scope="BASE",
+                attributes=["memberOf"],
+            )
+            if conn.entries and hasattr(conn.entries[0], "memberOf"):
+                return [str(dn) for dn in conn.entries[0].memberOf.values]
+            return []
+
+        return self.connection_manager.execute_with_retry(get_member_of_op)
+
+    def copy_groups(
+        self, source_dn: str, target_dn: str
+    ) -> Tuple[bool, str, List[str]]:
+        """Add the target to every group the source is a member of.
+
+        Groups the target already belongs to are skipped.
+
+        Args:
+            source_dn: DN of the user to copy memberships from
+            target_dn: DN of the user to add to those groups
+
+        Returns:
+            Tuple of (success: bool, message: str, added group DNs)
+        """
+        try:
+            source_groups = self.get_member_of(source_dn)
+            existing = {dn.lower() for dn in self.get_member_of(target_dn)}
+        except Exception as e:
+            return False, f"Error reading group memberships: {e}", []
+
+        added: List[str] = []
+        failed: List[str] = []
+        skipped = 0
+        for group_dn in source_groups:
+            if group_dn.lower() in existing:
+                skipped += 1
+                continue
+            success, message = self.add_to_group(target_dn, group_dn)
+            if success:
+                added.append(group_dn)
+            else:
+                logger.debug("Could not add %s to %s: %s", target_dn, group_dn, message)
+                failed.append(group_dn)
+
+        message = f"Added to {len(added)} group(s)"
+        if skipped:
+            message += f", {skipped} already a member"
+        if failed:
+            message += f", {len(failed)} failed"
+        return len(failed) == 0, message, added
+
     def remove_from_group(self, user_dn: str, group_dn: str) -> Tuple[bool, str]:
         """Remove a user from a group.
 

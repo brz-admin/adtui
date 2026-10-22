@@ -208,6 +208,8 @@ adtui --no-auto-update    # Launch without auto-updating
 :createuser [ou]  Create new user account (uses current OU if not specified)
 :cu [ou]         Same as :createuser
 :copyuser [source] [ou] Copy user account (uses current selection if not specified)
+:copygroups <user> Add selected user to all groups of <user> (name or DN)
+:cpg <user>      Same as :copygroups
 :unlock           Unlock currently selected locked user account
 :enable          Enable currently selected disabled user account
 :en              Same as :enable
