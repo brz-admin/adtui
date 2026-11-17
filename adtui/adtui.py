@@ -426,6 +426,28 @@ class ADTUI(App):
         # Check for updates in background
         self._start_update_check()
 
+        # After an update, tell the user what changed
+        self.set_timer(0.8, self._show_whats_new)
+
+    def _show_whats_new(self) -> None:
+        """Show the (French) release notes once after an update."""
+        try:
+            from . import __version__
+            from .services.whats_new import (
+                WhatsNewTracker,
+                format_notes,
+                unseen_notes,
+            )
+            from .ui.dialogs import WhatsNewDialog
+
+            tracker = WhatsNewTracker()
+            entries = unseen_notes(__version__, tracker.load())
+            tracker.save(__version__)
+            if entries:
+                self.push_screen(WhatsNewDialog(__version__, format_notes(entries)))
+        except Exception as e:
+            logger.debug("Could not show what's new: %s", e)
+
     def _start_update_check(self):
         """Start background update check."""
         try:

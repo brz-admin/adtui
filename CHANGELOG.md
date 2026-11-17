@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Tab` completes and descends, `Enter` moves to the typed path or the chosen
   suggestion, and a hint line shows the keys
 
+- "Nouveautés" dialog (in French) shown once on the first launch after an
+  update; the notes ship with the code (`services/whats_new.py`, add an entry per
+  release) and the last seen version is stored in `last_seen_version.txt`
+
 ### 🐛 Fixed
 - `Tab` completion during `:move` never worked (the screen's own Tab binding won)
 - `:move` to containers such as `CN=Users` (paths were always turned into `ou=`)

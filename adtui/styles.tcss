@@ -227,3 +227,10 @@ Static, Label, ADTree, DetailsPane, SearchResultsPane {
 
 
 
+
+/* "Nouveautés" dialog shown after an update */
+#whats-new-body {
+    height: auto;
+    max-height: 20;
+    padding: 0 1;
+}

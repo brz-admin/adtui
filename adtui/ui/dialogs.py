@@ -69,6 +69,41 @@ class BaseConfirmDialog(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm")
 
 
+class WhatsNewDialog(ModalScreen[None]):
+    """Nouveautés shown once after an update."""
+
+    BINDINGS = [("escape", "close", "Fermer"), ("enter", "close", "Fermer")]
+
+    def __init__(self, version: str, text: str):
+        super().__init__()
+        self.version = version
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(
+                f"[bold green]ADTUI a été mis à jour ({self.version})[/bold green]\n"
+                f"[bold]Nouveautés[/bold]",
+                id="question",
+            ),
+            ScrollableContainer(Static(self.text), id="whats-new-body"),
+            Horizontal(
+                Button("OK", variant="success", id="close"),
+                id="dialog-buttons",
+            ),
+            id="dialog",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#close", Button).focus()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
+
+
 class ConfirmDeleteDialog(BaseConfirmDialog):
     """Dialog to confirm object deletion."""
 
