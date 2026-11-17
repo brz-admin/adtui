@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ✨ Features
+- Connect to several ADs at the same time: `:connect [domain]` (or `+`) logs in
+  to another AD, or the same one with a different account, without logging out.
+  The trees are stacked one under another and every action (search, move,
+  create, delete, undo, ...) uses the account of the tree you are working in.
+  Switching to a tree of another AD clears the selection so an object is never
+  acted on with the wrong account. `:close` disconnects only the active AD;
+  an authentication failure on one AD no longer disconnects the others
+- Easier `:move` autocomplete: matches any part of an OU name anywhere in the
+  domain (the OU list is loaded once in the background, so suggestions are
+  instant), the match is highlighted, `↑`/`↓` choose without leaving the input,
+  `Tab` completes and descends, `Enter` moves to the typed path or the chosen
+  suggestion, and a hint line shows the keys
+
+### 🐛 Fixed
+- `Tab` completion during `:move` never worked (the screen's own Tab binding won)
+- `:move` to containers such as `CN=Users` (paths were always turned into `ou=`)
+- The suggestion list stayed on screen and focus was lost after running `:move`
+- A failed login attempt no longer leaves a background reconnect running
+
 ## [2.6.0] - 2026-10-22
 
 ### ✨ Features

@@ -189,8 +189,15 @@ Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' `
 | `/<query>` | Search (vim-style) | `/john.doe` |
 | `:s <query>` | Search by cn or sAMAccountName | `:s admin` |
 | `:d`, `:del` | Delete selected object | `:d` |
-| `:m <path>` | Move with autocomplete | `:m Users/IT/` |
+| `:m <path>` | Move with autocomplete (↑↓ choose, Tab complete, Enter move) | `:m help` |
 | `:move <path>` | Same as `:m` | `:move IT/Archive` |
+
+### Several ADs at once
+| Command | Description |
+|---------|-------------|
+| `:connect [domain]`, `+` | Log in to another AD (or same AD, other account) |
+| `:close`, `:cl` | Disconnect the AD of the active tree only |
+| `:logout`, `:lo` | Disconnect everything, back to login |
 
 ### OU Management
 | Command | Description | Example |

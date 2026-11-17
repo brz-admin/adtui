@@ -16,7 +16,8 @@ A powerful Terminal User Interface (TUI) for managing Active Directory, built wi
 
 ### Advanced Features
 
-- ✨ **Path Autocomplete** - Intelligent OU path completion for move operations
+- ✨ **Path Autocomplete** - Type any part of an OU name after `:m`, pick with ↑↓, `Tab` completes, `Enter` moves
+- 🔀 **Several ADs at once** - `:connect` (or `+`) logs in to another AD (or the same one with another account); the trees stack on top of each other and every action uses the account of the tree you are working in
 - 🔄 **Undo Support** - Undo recent create/move operations
 - ♻️ **Recycle Bin** - View and restore deleted objects (requires AD Recycle Bin)
 - ⚠️ **Expiry Alerts** - Automatic alerts for expiring passwords and accounts
@@ -191,9 +192,33 @@ adtui --no-auto-update    # Launch without auto-updating
 
 ```
 :d, :del          Delete selected object
-:m <path>         Move to path (with autocomplete)
+:m <path>         Move to an OU (with autocomplete)
 :move <path>      Same as :m
 ```
+
+While typing a move path, matching OUs are listed under the input (the whole
+domain is searched, so `:m help` finds `Departments/IT/Helpdesk`):
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Choose a suggestion |
+| `Tab` | Complete the chosen suggestion (adds `/` to list its sub-OUs) |
+| `Enter` | Move to the typed path, or to the chosen suggestion |
+| `Esc` | Cancel |
+
+#### Several ADs at once
+
+```
+:connect [domain]   Log in to another AD (also: + or :add)
+:close, :cl         Disconnect the active AD only
+:logout             Disconnect everything and return to login
+```
+
+Each connected AD gets its own tree, stacked one under another. `Tab` / mouse
+move between them: the tree you are in is the one every command (search, move,
+create, delete, undo...) is performed on, with the account you logged in with
+for that AD. Selecting a tree of another AD clears the current selection, so an
+object is never acted on with the wrong account.
 
 #### OU Management
 

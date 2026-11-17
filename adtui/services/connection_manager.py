@@ -67,6 +67,11 @@ class ConnectionManager:
         # Retry state
         self._retry_count = 0
         self._last_error: Optional[str] = None
+        # Error of the very first connection attempt (kept even if a reconnect
+        # is then scheduled, so callers can report why a login failed)
+        self.first_error: Optional[str] = None
+        # Set by close(): pending reconnect timers must then do nothing
+        self._closed = False
 
         # Health monitoring
         self._health_check_timer: Optional[threading.Timer] = None
@@ -243,6 +248,7 @@ class ConnectionManager:
 
         except Exception as e:
             error_msg = f"Failed to connect: {e}"
+            self.first_error = str(e)
             self._set_state(ConnectionState.FAILED, error_msg)
             logger.error(error_msg)
 
@@ -259,6 +265,8 @@ class ConnectionManager:
 
     def _schedule_reconnect(self):
         """Schedule reconnection attempt with exponential backoff."""
+        if self._closed:
+            return
         if self._retry_count >= self.max_retries:
             error_msg = f"Max retries ({self.max_retries}) exceeded"
             self._set_state(ConnectionState.FAILED, error_msg)
@@ -287,6 +295,8 @@ class ConnectionManager:
 
     def _reconnect(self):
         """Attempt to reconnect."""
+        if self._closed:
+            return
         try:
             # Close existing connection if any
             with self._connection_lock:
@@ -461,6 +471,7 @@ class ConnectionManager:
     def close(self):
         """Close connection and cleanup resources."""
         logger.info("Closing connection manager")
+        self._closed = True
 
         # Stop health checks
         self._stop_health_check.set()

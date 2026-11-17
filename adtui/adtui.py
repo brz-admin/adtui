@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import subprocess
 import sys
 from typing import Optional
@@ -18,7 +19,7 @@ try:
     from .adtree import ADTree
     from .widgets.details_pane import DetailsPane
     from .widgets.page_list_view import PageListView
-    from .services import LDAPService, HistoryService, PathService
+    from .services import LDAPService, HistoryService, PathService, ADSession
     from .services.config_service import ConfigService, ADConfig
     from .services.connection_manager import ConnectionManager, ConnectionState
     from .commands import CommandHandler
@@ -37,7 +38,7 @@ except ImportError:
     from adtree import ADTree
     from widgets.details_pane import DetailsPane
     from widgets.page_list_view import PageListView
-    from services import LDAPService, HistoryService, PathService
+    from services import LDAPService, HistoryService, PathService, ADSession
     from services.config_service import ConfigService, ADConfig
     from services.connection_manager import ConnectionManager, ConnectionState
     from commands import CommandHandler
@@ -105,26 +106,38 @@ def create_connection_manager(
     return manager
 
 
+# ":m <path>", ":mv <path>", ":move <path>" (path may be empty)
+_MOVE_RE = re.compile(r"^:(?P<cmd>m|mv|move)\s+(?P<path>.*)$", re.IGNORECASE)
+# ":m", ":mv", ":move" before the space is typed
+_MOVE_PREFIX_RE = re.compile(r"^:(m|mv|move)$", re.IGNORECASE)
+
+
 class SearchResultsPane(PageListView):
     """ListView for displaying search results."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.connection_manager = None
+        # Session the displayed results come from
+        self.session = None
 
-    def populate(self, results, connection_manager=None):
+    def populate(self, results, connection_manager=None, session=None):
         """Populate the search results pane.
 
         Args:
             results: List of result dictionaries with 'label' and 'dn'
             connection_manager: Optional ConnectionManager instance
+            session: ADSession the results belong to
         """
         self.clear()
         self.connection_manager = connection_manager
+        self.session = session
         for result in results:
             item = ListItem(Label(result["label"]))
             item.text = result["label"]
             item.data = result["dn"]
+            # Optional extra payload (used by the move autocomplete)
+            item.path = result.get("path")
             self.append(item)
 
         # Auto-highlight first item
@@ -157,7 +170,13 @@ class ADTUI(App):
         Binding("U", "unlock_user", "Unlock", show=False),
         Binding("?", "show_help", "Help", show=False),
         Binding("escape", "cancel_command", "Cancel", show=False),
-        Binding("tab", "cycle_focus", "Cycle Focus", show=False),
+        # Priority so it beats the Screen's own tab binding; only active while
+        # completing a path (see check_action), otherwise Tab cycles focus as usual
+        Binding("tab", "cycle_focus", "Cycle Focus", show=False, priority=True),
+        # Move autocomplete: pick a suggestion without leaving the input
+        Binding("up", "ac_up", show=False, priority=True),
+        Binding("down", "ac_down", show=False, priority=True),
+        Binding("plus", "connect_ad", "Add AD", show=True, key_display="+"),
     ]
 
     def __init__(
@@ -165,6 +184,7 @@ class ADTUI(App):
         username: Optional[str] = None,
         password: Optional[str] = None,
         ad_config: Optional[ADConfig] = None,
+        config_service: Optional[ConfigService] = None,
     ):
         """Initialize the application.
 
@@ -172,39 +192,38 @@ class ADTUI(App):
             username: AD username (optional for deferred login)
             password: AD password (optional for deferred login)
             ad_config: AD configuration (optional for deferred login)
+            config_service: Loaded configuration, used by :connect to offer
+                the other configured ADs
         """
         super().__init__()
 
         self.ad_config = ad_config
+        self.config_service = config_service or getattr(self, "config_service", None)
 
-        # Only establish connection if credentials are provided
-        if username is not None and password is not None and ad_config is not None:
-            self.base_dn = ad_config.base_dn
-            self.connection_manager = create_connection_manager(
-                username, password, ad_config
-            )
-            # Set auth failure callback immediately so it's available even if initial connection fails
-            self.connection_manager.set_auth_failure_callback(
-                self._on_authentication_failure
-            )
-            self._initialize_services()
-        else:
-            self.connection_manager = None
-            self.ldap_service = None
-            self.history_service = None
-            self.path_service = None
-            self.command_handler = None
-            # Create placeholder widgets
-            from adtree import ADTree
+        # Several ADs can be connected at once: one session per connection.
+        # The "active" session is the one every action is performed with.
+        self.sessions: list[ADSession] = []
+        self.active_session: Optional[ADSession] = None
 
-            self.base_dn = ad_config.base_dn if ad_config else ""
-            self.adtree = ADTree(None, self.base_dn)
-            self.details = DetailsPane(id="details-pane")
-            self.search_results_pane = SearchResultsPane(id="search-results-pane")
+        # Widgets shared by all sessions
+        self._placeholder_tree = ADTree(None, "")
+        self.details = DetailsPane(id="details-pane")
+        self.search_results_pane = SearchResultsPane(id="search-results-pane")
+        self.command_handler = CommandHandler(self)
+
+        # Pending operations
+        self.pending_delete_dn: Optional[str] = None
+        self.pending_force_delete_dn: Optional[str] = None
+        self.pending_move_dn: Optional[str] = None
+        self.pending_move_target: Optional[str] = None
+        self.pending_restore_dn: Optional[str] = None
+        self.pending_restore_label: Optional[str] = None
 
         # State management
         self.command_mode = False
         self.autocomplete_mode = False
+        self._ac_timer = None
+        self._ac_generation = 0
 
         # Current selection
         self.current_selected_dn: Optional[str] = None
@@ -216,57 +235,174 @@ class ADTUI(App):
         # Update check result (populated asynchronously)
         self._update_result = None
 
-    def _initialize_services(self):
-        """Initialize services after connection is established."""
-        # Initialize services
-        self.ldap_service = LDAPService(self.connection_manager, self.base_dn)
-        self.history_service = HistoryService(max_size=50)
-        self.path_service = PathService(self.base_dn)
+        # Only establish connection if credentials are provided
+        if username is not None and password is not None and ad_config is not None:
+            manager = create_connection_manager(username, password, ad_config)
+            self._register_session(ADSession(ad_config, username, manager))
 
-        # Initialize command handler
-        self.command_handler = CommandHandler(self)
+    # ==================== Sessions (one per connected AD) ====================
 
-        # Initialize widgets
-        self.adtree = ADTree(self.connection_manager, self.base_dn)
-        self.details = DetailsPane(id="details-pane")
-        self.search_results_pane = SearchResultsPane(id="search-results-pane")
+    # Everything below proxies to the active session, so the rest of the code
+    # keeps using self.ldap_service / self.connection_manager / ... and
+    # automatically acts with the account of the AD the user is working in.
 
-        # Pending operations
-        self.pending_delete_dn: Optional[str] = None
-        self.pending_force_delete_dn: Optional[str] = None
-        self.pending_move_dn: Optional[str] = None
-        self.pending_move_target: Optional[str] = None
-        self.pending_restore_dn: Optional[str] = None
-        self.pending_restore_label: Optional[str] = None
+    @property
+    def connection_manager(self):
+        return self.active_session.connection_manager if self.active_session else None
 
-        # Set up connection state monitoring
-        self.connection_manager.add_state_change_callback(
-            self._on_connection_state_change
+    @property
+    def ldap_service(self):
+        return self.active_session.ldap_service if self.active_session else None
+
+    @property
+    def path_service(self):
+        return self.active_session.path_service if self.active_session else None
+
+    @property
+    def history_service(self):
+        return self.active_session.history_service if self.active_session else None
+
+    @property
+    def base_dn(self) -> str:
+        if self.active_session:
+            return self.active_session.base_dn
+        return self.ad_config.base_dn if self.ad_config else ""
+
+    @property
+    def adtree(self):
+        if self.active_session and self.active_session.adtree is not None:
+            return self.active_session.adtree
+        return self._placeholder_tree
+
+    def _register_session(self, session: ADSession) -> ADSession:
+        """Create the tree for a new session and start monitoring it.
+
+        Safe to call before the app runs (tree is composed later) and from the
+        UI thread while running (tree is mounted immediately).
+        """
+        session.adtree = ADTree(
+            session.connection_manager, session.base_dn, session=session
+        )
+        self.sessions.append(session)
+        self.active_session = session
+
+        session.connection_manager.add_state_change_callback(
+            lambda state, error=None, s=session: self._on_connection_state_change(
+                s, state, error
+            )
+        )
+        session.connection_manager.set_auth_failure_callback(
+            lambda s=session: self._on_authentication_failure(s)
         )
 
-        # Set up authentication failure callback
-        self.connection_manager.set_auth_failure_callback(
-            self._on_authentication_failure
-        )
+        if self.is_running:
+            self._mount_session_tree(session)
+        return session
+
+    def _mount_session_tree(self, session: ADSession) -> None:
+        """Add a session's tree below the existing ones."""
+        columns = self.query("#tree-column")
+        if not columns:
+            return  # layout not built yet: it will include this tree
+        column = columns.first()
+        if self._placeholder_tree.parent is not None:
+            self._placeholder_tree.remove()
+        column.mount(session.adtree)
+        self._clear_selection()
+        self._refresh_tree_styles()
+        self.set_timer(0.5, lambda: self._expand_tree_on_startup(session))
+        session.adtree.focus()
+
+    def _make_tree_column(self) -> Vertical:
+        """Build the left column holding one tree per session."""
+        trees = [s.adtree for s in self.sessions if s.adtree is not None]
+        column = Vertical(*(trees or [self._placeholder_tree]), id="tree-column")
+        return column
+
+    def _refresh_tree_styles(self) -> None:
+        """Update tree titles and highlight the tree of the active session."""
+        multi = len(self.sessions) > 1
+        for session in self.sessions:
+            tree = session.adtree
+            if tree is None:
+                continue
+            tree.border_title = session.title
+            tree.set_class(multi and session is self.active_session, "-active")
+            tree.set_class(multi, "-multi")
+
+    def _set_active_session(
+        self, session: Optional[ADSession], clear_selection: bool = True
+    ) -> None:
+        """Make ``session`` the one actions are performed with.
+
+        The current selection belongs to a single AD, so it is cleared when the
+        active session changes (otherwise a DN of one AD could be acted upon
+        with the account of the other).
+        """
+        if session is None or session is self.active_session:
+            return
+        self.active_session = session
+        if clear_selection:
+            self._clear_selection()
+        self._refresh_tree_styles()
+
+    def _clear_selection(self) -> None:
+        self.current_selected_dn = None
+        self.current_selected_label = None
+        try:
+            self.details.update_content("No selection", None, None)
+        except Exception:
+            pass
+
+    def on_descendant_focus(self, event) -> None:
+        """Working in a tree switches to the account that tree was opened with."""
+        widget = event.widget
+        if isinstance(widget, ADTree) and widget.session is not None:
+            self._set_active_session(widget.session)
+
+    def remove_session(self, session: ADSession) -> None:
+        """Disconnect one AD and remove its tree."""
+        if session not in self.sessions:
+            return
+        index = self.sessions.index(session)
+        self.sessions.remove(session)
+        session.close()
+        if session.adtree is not None and session.adtree.parent is not None:
+            session.adtree.remove()
+
+        if self.search_results_pane.session is session:
+            self.search_results_pane.clear()
+            self.search_results_pane.session = None
+            self.search_results_pane.styles.display = "none"
+
+        if self.active_session is session:
+            self.active_session = None
+            if self.sessions:
+                nxt = self.sessions[min(index, len(self.sessions) - 1)]
+                self._clear_selection()
+                self.active_session = nxt
+                if nxt.adtree is not None:
+                    nxt.adtree.focus()
+        self._refresh_tree_styles()
+
+    def _find_session(self, domain: str, username: str) -> Optional[ADSession]:
+        for s in self.sessions:
+            if s.name.lower() == domain.lower() and s.username.lower() == username.lower():
+                return s
+        return None
+
+    def _get_config_service(self) -> Optional[ConfigService]:
+        if self.config_service is None:
+            try:
+                self.config_service = ConfigService()
+            except Exception as e:
+                logger.error("Could not load configuration: %s", e)
+        return self.config_service
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
-        # Ensure all required attributes exist
-        if not hasattr(self, "adtree") or self.adtree is None:
-            from adtree import ADTree
-
-            self.base_dn = getattr(self, "base_dn", "")
-            self.adtree = ADTree(None, self.base_dn)
-
-        if not hasattr(self, "details") or self.details is None:
-            self.details = DetailsPane(id="details-pane")
-
-        if not hasattr(self, "search_results_pane") or self.search_results_pane is None:
-            self.search_results_pane = SearchResultsPane(id="search-results-pane")
-
         with Horizontal():
-            with Vertical():
-                yield self.adtree
+            yield self._make_tree_column()
             with Vertical():
                 yield self.details
                 yield self.search_results_pane
@@ -278,6 +414,9 @@ class ADTUI(App):
         cmd_input = self.query_one("#command-input", Input)
         cmd_input.visible = False
         self._update_footer()
+        self._refresh_tree_styles()
+        # Keyboard shortcuts only work outside the (hidden) command input
+        self.adtree.focus()
 
         # Expand tree to show root level on startup with delay to ensure initialization
         self.set_timer(0.5, self._expand_tree_on_startup)
@@ -335,7 +474,11 @@ class ADTUI(App):
 
     def action_refresh_ou(self):
         """Refresh the currently selected OU."""
-        self.adtree.refresh_current_ou()
+        # OUs may have been created/moved/deleted: refresh the move autocomplete list
+        if self.active_session:
+            self.active_session.ou_index.invalidate()
+        tree = self.focused if isinstance(self.focused, ADTree) else self.adtree
+        tree.refresh_current_ou()
 
     def refresh_specific_ou(self, ou_dn: str):
         """Refresh a specific OU by DN."""
@@ -349,29 +492,42 @@ class ADTUI(App):
             cmd_input.value = ""
             cmd_input.visible = False
             self.command_mode = False
-            self.autocomplete_mode = False
+            self._end_autocomplete()
             # Hide search results if visible
             self.search_results_pane.styles.display = "none"
             # Return focus to tree
             self.adtree.focus()
 
     def action_cycle_focus(self):
-        """Cycle focus between widgets."""
-        # In autocomplete mode, tab between input and results
+        """Tab: complete the highlighted suggestion in autocomplete, else cycle focus."""
         if self.autocomplete_mode:
-            focused = self.focused
             cmd_input = self.query_one("#command-input", Input)
-
-            # If currently on input or not on results, go to results
-            if focused == cmd_input or focused != self.search_results_pane:
-                if self.search_results_pane.styles.display == "block":
-                    self.search_results_pane.focus()
+            if self.focused is cmd_input:
+                self._ac_complete_highlighted()
             else:
-                # Go back to input
+                # Focus ended up on the suggestions (mouse): back to typing
                 cmd_input.focus()
         else:
             # Normal tab behavior
             self.focus_next()
+
+    def check_action(self, action: str, parameters) -> Optional[bool]:
+        """Up/Down only steer the suggestions while the move autocomplete is typing."""
+        if action == "cycle_focus":
+            return bool(self.autocomplete_mode and self.command_mode)
+        if action in ("ac_up", "ac_down"):
+            return bool(
+                self.autocomplete_mode
+                and self.command_mode
+                and isinstance(self.focused, Input)
+            )
+        return super().check_action(action, parameters)
+
+    def action_ac_up(self):
+        self.search_results_pane.action_cursor_up()
+
+    def action_ac_down(self):
+        self.search_results_pane.action_cursor_down()
 
     def action_edit_attributes(self):
         """Edit attributes of selected object."""
@@ -533,111 +689,129 @@ class ADTUI(App):
         pass
 
     def _on_connection_state_change(
-        self, state: ConnectionState, error: Optional[str] = None
+        self,
+        session: ADSession,
+        state: ConnectionState,
+        error: Optional[str] = None,
     ):
-        """Handle connection state changes.
+        """Handle connection state changes of one session.
 
         Args:
+            session: Session whose connection changed
             state: New connection state
             error: Optional error message
         """
+        # With several ADs connected, say which one the message is about
+        where = session.name if len(self.sessions) > 1 else "Active Directory"
 
         # Use call_from_thread since this callback may be invoked from background threads
         def update_ui():
+            if session not in self.sessions:
+                return
             if state == ConnectionState.CONNECTED:
-                self.notify("Connected to Active Directory", severity="information")
+                self.notify(f"Connected to {where}", severity="information")
                 # Rebuild tree when connection is established
-                if hasattr(self, "adtree") and self.adtree:
-                    self.adtree.build_tree()
+                if session.adtree is not None:
+                    session.adtree.build_tree()
             elif state == ConnectionState.RECONNECTING:
-                self.notify(f"Reconnecting to AD... {error or ''}", severity="warning")
+                self.notify(
+                    f"Reconnecting to {where}... {error or ''}", severity="warning"
+                )
             elif state == ConnectionState.FAILED:
                 self.notify(
-                    f"Connection failed: {error or 'Unknown error'}", severity="error"
+                    f"{where}: connection failed: {error or 'Unknown error'}",
+                    severity="error",
                 )
 
         self.call_from_thread(update_ui)
 
-    def _on_authentication_failure(self):
-        """Handle authentication failure - exit to restart login flow."""
+    def _on_authentication_failure(self, session: Optional[ADSession] = None):
+        """Authentication failed (called from the connection manager's thread)."""
+        self.call_from_thread(self._handle_session_auth_failure, session)
 
-        # Use call_from_thread since this may be called from connection manager's background thread
-        def handle_auth_failure():
-            try:
-                # Set auth failure flag so main() knows to restart login
-                self.auth_failed = True
+    def _handle_session_auth_failure(self, session: Optional[ADSession] = None):
+        """Handle authentication failure of a session (UI thread).
 
-                # Clear current connection and services
-                self.connection_manager = None
-                self.ldap_service = None
-                self.history_service = None
-                self.path_service = None
-                self.command_handler = None
+        With a single AD connected: exit to restart the login flow. With
+        several, only the failing one is dropped and the others keep working.
+        """
+        try:
+            if session is not None and len(self.sessions) > 1:
+                name = session.title
+                self.remove_session(session)
+                self.notify(
+                    f"Authentication failed for {name}: disconnected. "
+                    "Use :connect to log in again.",
+                    severity="error",
+                    timeout=10,
+                )
+                return
 
-                # Reset tree to empty state
-                if hasattr(self, "adtree") and self.adtree:
-                    self.adtree = ADTree(None, self.base_dn)
+            # Set auth failure flag so main() knows to restart login
+            self.auth_failed = True
 
-                # Clear details pane
-                if hasattr(self, "details") and self.details:
-                    self.details.update_content("No connection", None, None)
+            for s in list(self.sessions):
+                s.close()
+            self.sessions.clear()
+            self.active_session = None
 
-                # Exit main app to trigger login restart in main script
-                self.exit()
+            # Exit main app to trigger login restart in main script
+            self.exit()
 
-            except Exception as e:
-                import traceback
+        except Exception:
+            import traceback
 
-                traceback.print_exc()
-
-        self.call_from_thread(handle_auth_failure)
+            traceback.print_exc()
 
     # ==================== Input Handling ====================
 
     def on_input_changed(self, event: Input.Changed):
         """Handle input changes for autocomplete."""
         if self.command_mode and event.input.id == "command-input":
-            value = event.value
-
-            # Check for move commands: :m, :mv, :move
-            if (
-                value.startswith(":m ")
-                or value.startswith(":mv ")
-                or value.startswith(":move ")
-            ):
-                if value.startswith(":move "):
-                    prefix_len = 6
-                elif value.startswith(":mv "):
-                    prefix_len = 4
-                else:
-                    prefix_len = 3
-                path_input = value[prefix_len:]
-                # Trigger autocomplete if ends with / or has content
-                if path_input.endswith("/") or len(path_input) >= 1:
-                    self.show_path_autocomplete(path_input)
+            match = _MOVE_RE.match(event.value)
+            if match and self.active_session:
+                self._request_autocomplete(match.group("path"))
             elif self.autocomplete_mode:
-                self.autocomplete_mode = False
-                self.search_results_pane.styles.display = "none"
+                self._end_autocomplete(hide_pane=True)
+            else:
+                # ":m" / ":mv" / ":move" typed so far: warm the OU list up so the
+                # first suggestions are instant once the path is being typed
+                if _MOVE_PREFIX_RE.match(event.value) and self.active_session:
+                    self._ensure_ou_index(self.active_session)
 
     def on_input_submitted(self, event: Input.Submitted):
         """Handle command submission."""
         if self.command_mode:
             cmd = event.value.strip()
 
-            # Execute command via handler
-            self.command_handler.execute(cmd)
+            match = _MOVE_RE.match(cmd)
+            if match and self.active_session:
+                # Resolve what was typed (or the highlighted suggestion) to a DN
+                target = self._ac_resolve_target(match.group("path"))
+                if target is None:
+                    return  # message shown, keep the input open to fix the path
+                cmd = f":{match.group('cmd')} {target}"
 
-            # Cleanup
+            if self.autocomplete_mode:
+                self._end_autocomplete(hide_pane=True)
+
+            # Cleanup first so command output (search results, dialogs) wins focus
             cmd_input = self.query_one("#command-input", Input)
             cmd_input.value = ""
             cmd_input.visible = False
             self.command_mode = False
-            self.autocomplete_mode = False
+            self.adtree.focus()
+
+            # Execute command via handler
+            self.command_handler.execute(cmd)
 
     # ==================== Selection Handlers ====================
 
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """Handle tree node selection."""
+        tree = event.control
+        if isinstance(tree, ADTree) and tree.session is not None:
+            self._set_active_session(tree.session)
         node = event.node
         self.current_selected_dn = node.data
         self.current_selected_label = node.label
@@ -649,6 +823,10 @@ class ADTUI(App):
         if event.list_view.id == "search-results-pane" and not self.autocomplete_mode:
             item = event.item
             if hasattr(item, "data") and item.data:
+                # Results belong to the AD they were searched in
+                self._set_active_session(
+                    self.search_results_pane.session, clear_selection=False
+                )
                 self.current_selected_dn = item.data
                 self.current_selected_label = item.text
                 self.details.update_content(
@@ -662,21 +840,9 @@ class ADTUI(App):
             item = event.item
             if hasattr(item, "data"):
                 if self.autocomplete_mode:
-                    # Autocomplete: complete the path
-                    label = item.text
-                    if "📁" in label:
-                        # Extract path, preserving spaces
-                        path = label.replace("📁 ", "").strip()
-                        cmd_input = self.query_one("#command-input", Input)
-                        # Always end with / to show next level
-                        if not path.endswith("/"):
-                            path = path + "/"
-                        cmd_input.value = f":m {path}"
-                        cmd_input.cursor_position = len(cmd_input.value)
-                        # Trigger next autocomplete
-                        self.show_path_autocomplete(path)
-                        # Keep focus on search results so user can continue navigating
-                        self.set_timer(0.05, lambda: self.search_results_pane.focus())
+                    # Clicked/Entered a suggestion: complete it and keep typing
+                    self._ac_complete_item(item)
+                    self.query_one("#command-input", Input).focus()
                 elif "[Deleted]" in str(item.text):
                     # Deleted object from recycle bin: offer to restore
                     self.pending_restore_dn = item.data
@@ -838,95 +1004,182 @@ class ADTUI(App):
         except Exception as e:
             self.notify(f"Could not select object in tree: {e}", severity="warning")
 
-    def _expand_tree_on_startup(self) -> None:
-        """Expand tree to show root level on startup."""
-        try:
-            if (
-                hasattr(self, "adtree")
-                and self.adtree
-                and hasattr(self.adtree, "connection_manager")
-                and self.adtree.connection_manager
-                and hasattr(self.adtree, "root")
-                and self.adtree.root
-                and hasattr(self.adtree.root, "children")
-                and self.adtree.root.children
-            ):
-                root_node = self.adtree.root.children[0]  # Base DN node
-                # Ensure root node is expanded and loaded
-                if not root_node.is_expanded:
-                    root_node.expand()
-                    self.adtree.ensure_node_loaded(root_node)
-        except Exception as e:
-            # Silently fail - tree expansion is a nice-to-have feature
-            pass
+    def _expand_tree_on_startup(self, session: Optional[ADSession] = None) -> None:
+        """Expand tree(s) to show root level on startup."""
+        for sess in [session] if session else list(self.sessions):
+            try:
+                tree = sess.adtree
+                if tree is not None and tree.connection_manager and tree.root.children:
+                    root_node = tree.root.children[0]  # Base DN node
+                    # Ensure root node is expanded and loaded
+                    if not root_node.is_expanded:
+                        root_node.expand()
+                        tree.ensure_node_loaded(root_node)
+            except Exception:
+                # Silently fail - tree expansion is a nice-to-have feature
+                pass
 
     def _delayed_tree_rebuild(self) -> None:
-        """Rebuild tree after delay to ensure connection is ready."""
-        try:
-            if (
-                hasattr(self, "adtree")
-                and self.adtree
-                and self.adtree.connection_manager
-            ):
-                self.adtree.build_tree()
-        except Exception as e:
-            import traceback
+        """Rebuild trees after delay to ensure connections are ready."""
+        for sess in list(self.sessions):
+            try:
+                if sess.adtree is not None and sess.adtree.connection_manager:
+                    sess.adtree.build_tree()
+            except Exception:
+                import traceback
 
-            traceback.print_exc()
+                traceback.print_exc()
 
     # ==================== Autocomplete ====================
 
-    def show_path_autocomplete(self, partial_path: str):
-        """Show autocomplete suggestions for paths."""
-        self.autocomplete_mode = True
+    # Hint shown in the border of the suggestion list while completing a path
+    _AC_HINT = "Move to ▸ ↑↓ choose · Tab complete · Enter move · Esc cancel"
 
-        # Handle case where path ends with / - show all children
-        if partial_path.endswith("/"):
-            path_parts = [
-                p.strip() for p in partial_path.rstrip("/").split("/") if p.strip()
-            ]
-            search_prefix = ""
-        else:
-            path_parts = [p.strip() for p in partial_path.split("/") if p.strip()]
-            search_prefix = path_parts[-1].lower() if path_parts else ""
-            path_parts = path_parts[:-1]  # Remove last part for search base
+    def _ensure_ou_index(self, session: ADSession) -> None:
+        """Load (or refresh) the session's OU list in the background."""
+        index = session.ou_index
+        if not index.needs_load:
+            return
 
-        # Determine search base
-        if path_parts:
-            search_base = (
-                self.path_service.path_to_dn("/".join(path_parts))
-                if self.path_service
-                else self.base_dn
+        def load():
+            index.load(session.ldap_service.list_all_ou_dns)
+            self.call_from_thread(self._on_ou_index_ready, session)
+
+        self.run_worker(load, thread=True, group=f"ou-index-{session.id}")
+
+    def _on_ou_index_ready(self, session: ADSession) -> None:
+        """OU list arrived: refresh the suggestions for what is typed now."""
+        if session.ou_index.last_error:
+            self.notify(
+                f"Could not list OUs of {session.name}: {session.ou_index.last_error}",
+                severity="error",
             )
-        else:
-            search_base = self.base_dn
+        if self.autocomplete_mode and session is self.active_session:
+            match = _MOVE_RE.match(self.query_one("#command-input", Input).value)
+            if match:
+                self._show_suggestions(match.group("path"))
 
-        try:
-            ous = self.ldap_service.search_ous(search_base, search_prefix, limit=50)
+    def _request_autocomplete(self, text: str) -> None:
+        """Typed text after :move changed: show matching OUs."""
+        session = self.active_session
+        if session is None:
+            return
+        self.autocomplete_mode = True
+        self._ensure_ou_index(session)
+        self._show_suggestions(text)
 
-            suggestions = []
-            for ou in ous:
-                if path_parts:
-                    full_path = "/".join(path_parts) + "/" + ou["name"]
-                else:
-                    full_path = ou["name"]
+    def _show_suggestions(self, text: str) -> None:
+        """Fill the list under the input with the OUs matching ``text``."""
+        session = self.active_session
+        pane = self.search_results_pane
+        pane.add_class("autocomplete")
+        pane.border_title = self._AC_HINT
+        pane.styles.display = "block"
 
-                suggestions.append(
-                    {"label": f"📁 {full_path}", "dn": ou["dn"], "path": full_path}
-                )
+        index = session.ou_index
+        if not index.is_loaded:
+            message = (
+                "Loading OUs…" if index.is_loading or index.needs_load else "No OU list"
+            )
+            pane.populate(
+                [{"label": f"[dim]{message}[/dim]", "dn": None}], session=session
+            )
+            return
 
-            if suggestions:
-                self.search_results_pane.populate(suggestions, self.connection_manager)
-                self.search_results_pane.styles.display = "block"
-                # Auto focus if requested
-                if len(suggestions) == 1 and not search_prefix:
-                    # If only one result and we're at /, could auto-select
-                    pass
+        entries = index.search(text, limit=50)
+        suggestions = [
+            {
+                "label": "📁 " + self._highlight_match(e.path, text),
+                "dn": e.dn,
+                "path": e.path,
+            }
+            for e in entries
+        ]
+        if not suggestions:
+            if text.rstrip().endswith("/") and index.find(text):
+                msg = "No sub-OUs here · Enter moves to this OU"
             else:
-                self.search_results_pane.clear()
-                self.search_results_pane.styles.display = "none"
-        except Exception as e:
-            pass
+                msg = "No matching OU"
+            suggestions = [{"label": f"[dim]{msg}[/dim]", "dn": None}]
+        pane.populate(suggestions, session=session)
+
+    @staticmethod
+    def _highlight_match(path: str, text: str) -> str:
+        """Markup for ``path`` with the part matching what was typed in bold."""
+        from rich.markup import escape
+
+        needle = text.replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+        pos = path.lower().rfind(needle) if needle else -1
+        if pos < 0:
+            return escape(path)
+        end = pos + len(needle)
+        return (
+            f"{escape(path[:pos])}[bold yellow]{escape(path[pos:end])}[/]"
+            f"{escape(path[end:])}"
+        )
+
+    def _end_autocomplete(self, hide_pane: bool = False) -> None:
+        """Leave autocomplete mode and restore the suggestion list's look."""
+        was_active = self.autocomplete_mode
+        self.autocomplete_mode = False
+        pane = self.search_results_pane
+        pane.remove_class("autocomplete")
+        pane.border_title = ""
+        if hide_pane and was_active:
+            pane.clear()
+            pane.styles.display = "none"
+
+    def _ac_set_input(self, cmd: str, path: str) -> None:
+        cmd_input = self.query_one("#command-input", Input)
+        cmd_input.value = f":{cmd} {path}"
+        cmd_input.cursor_position = len(cmd_input.value)
+
+    def _ac_complete_item(self, item) -> None:
+        """Put a suggestion in the input; descend into it when it has sub-OUs."""
+        path = getattr(item, "path", None)
+        if not path or not self.active_session:
+            return
+        index = self.active_session.ou_index
+        suffix = "/" if index.children(path) else ""
+        match = _MOVE_RE.match(self.query_one("#command-input", Input).value)
+        cmd = match.group("cmd") if match else "m"
+        self._ac_set_input(cmd, path + suffix)
+
+    def _ac_complete_highlighted(self) -> None:
+        item = self.search_results_pane.highlighted_child
+        if item is not None:
+            self._ac_complete_item(item)
+
+    def _ac_resolve_target(self, text: str) -> Optional[str]:
+        """DN to move to for what was typed after :move, or None (error shown).
+
+        An exact path wins; otherwise the highlighted suggestion is used so
+        that typing "IT" and pressing Enter works without having to Tab first.
+        """
+        text = text.strip()
+        if not text:
+            self.notify(MESSAGES["TARGET_REQUIRED"], severity=Severity.WARNING.value)
+            return None
+        if "=" in text and "," in text:
+            return text  # already a DN
+
+        index = self.active_session.ou_index
+        if not index.is_loaded:
+            self.notify("Still loading the OU list, try again…", severity="warning")
+            self._ensure_ou_index(self.active_session)
+            return None
+
+        entry = index.find(text)
+        if entry is None and self.autocomplete_mode:
+            item = self.search_results_pane.highlighted_child
+            if item is not None and getattr(item, "path", None):
+                entry = index.find(item.path)
+        if entry is None:
+            self.notify(
+                f"No OU matches '{text}'", severity=Severity.WARNING.value
+            )
+            return None
+        return entry.dn
 
     # ==================== Delete Operations ====================
 
@@ -960,6 +1213,7 @@ class ADTUI(App):
                 self.details.update_content("No selection", None, None)
             # Remove the deleted node from tree and select next appropriate node
             self.adtree.remove_node_by_dn(dn)
+            self.active_session.ou_index.invalidate()
         else:
             # Check if the failure is due to deletion protection
             if self.ldap_service.is_protected_from_deletion(dn):
@@ -1490,18 +1744,102 @@ class ADTUI(App):
         )
 
     def action_logout(self):
-        """Disconnect and return to login screen for domain switching."""
-        # Close current connection
-        if self.connection_manager:
-            try:
-                self.connection_manager.close()
-            except Exception:
-                pass
-            self.connection_manager = None
+        """Disconnect everything and return to login screen for domain switching."""
+        for session in list(self.sessions):
+            session.close()
+        self.sessions.clear()
+        self.active_session = None
 
         # Signal that we need to restart login flow
         self.auth_failed = True
         self.exit()
+
+    # ==================== Connecting several ADs ====================
+
+    def action_connect_ad(self, domain: Optional[str] = None):
+        """Log in to another AD (or the same one with another account)."""
+        config_service = self._get_config_service()
+        if config_service is None or not config_service.ad_configs:
+            self.notify("No AD configured", severity="error")
+            return
+
+        if domain:
+            wanted = {d.lower(): d for d in config_service.ad_configs}
+            if domain.lower() not in wanted:
+                self.notify(
+                    f"Unknown domain '{domain}'. Configured: "
+                    + ", ".join(config_service.ad_configs),
+                    severity="warning",
+                )
+                return
+            self._prompt_connect_login(wanted[domain.lower()])
+        elif config_service.has_multiple_domains():
+            self.push_screen(
+                ADSelectionDialog(config_service.ad_configs),
+                lambda d: self._prompt_connect_login(d) if d else None,
+            )
+        else:
+            self._prompt_connect_login(config_service.get_default_domain())
+
+    def _prompt_connect_login(self, domain: str, user: Optional[str] = None):
+        ad_config = self.config_service.get_config(domain)
+        self.push_screen(
+            LoginDialog(user or last_user, ad_config.domain, ad_config),
+            lambda result: self._start_connect(domain, result),
+        )
+
+    def _start_connect(self, domain: str, credentials) -> None:
+        """Connect in a background thread so the UI stays responsive."""
+        if not credentials:
+            return
+        username, password = credentials
+        ad_config = self.config_service.get_config(domain)
+
+        if self._find_session(ad_config.domain, username):
+            self.notify(
+                f"Already connected to {ad_config.domain} as {username}",
+                severity="warning",
+            )
+            return
+
+        self.notify(f"Connecting to {ad_config.domain} as {username}…")
+
+        def connect():
+            try:
+                manager = create_connection_manager(username, password, ad_config)
+                if manager.get_state() != ConnectionState.CONNECTED:
+                    reason = manager.first_error or manager.get_last_error()
+                    manager.close()
+                    raise ConnectionError(reason or "could not connect")
+            except Exception as e:
+                self.call_from_thread(self._connect_failed, domain, username, str(e))
+                return
+            session = ADSession(ad_config, username, manager)
+            self.call_from_thread(self._connect_succeeded, session)
+
+        self.run_worker(connect, thread=True, group="connect")
+
+    def _connect_succeeded(self, session: ADSession) -> None:
+        self._register_session(session)
+        self.notify(
+            f"Connected to {session.name} as {session.username}",
+            severity="information",
+        )
+
+    def _connect_failed(self, domain: str, username: str, error: str) -> None:
+        self.notify(f"Login to {domain} failed: {error}", severity="error", timeout=8)
+        # Let the user retry right away (typo in the password...)
+        self._prompt_connect_login(domain, username)
+
+    def action_close_session(self):
+        """Disconnect from the AD of the active tree (keeping the others)."""
+        if len(self.sessions) <= 1:
+            self.notify("Only one AD connected: use :logout or :q", severity="warning")
+            return
+        session = self.active_session
+        name = session.title
+        self.remove_session(session)
+        self.notify(f"Disconnected from {name}", severity="information")
 
     def _copy_to_system_clipboard(self, text: str, description: str):
         """Copy text to system clipboard with cross-platform support."""
@@ -2049,7 +2387,7 @@ def main():
 
             try:
                 # Create and run the main app with credentials and AD config
-                app = ADTUI(username, password, ad_config)
+                app = ADTUI(username, password, ad_config, config_service)
                 app.run()
 
                 # Check if app exited due to auth failure or logout (should restart login)

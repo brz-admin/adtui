@@ -9,7 +9,9 @@ For external access:
 
 import logging
 
-from .adtui import ADTUI, create_connection_manager
+from .adtui import ADTUI, SearchResultsPane, create_connection_manager
+from .services import ADSession
+from .widgets.details_pane import DetailsPane
 from .services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
@@ -98,7 +100,6 @@ class ADTUIServeApp(ADTUI):
             self.selected_domain = domain
             # Update ad_config for the selected domain
             self.ad_config = self.config_service.get_config(self.selected_domain)
-            self.base_dn = self.ad_config.base_dn
             self._show_login()
         else:
             # User cancelled, show selection again
@@ -131,18 +132,14 @@ class ADTUIServeApp(ADTUI):
         ad_config = self.config_service.get_config(self.selected_domain)
 
         try:
-            # Create connection manager with credentials
-            self.connection_manager = create_connection_manager(
-                username, password, ad_config
-            )
-
-            # Set auth failure callback
-            self.connection_manager.set_auth_failure_callback(
-                self._on_authentication_failure
-            )
-
-            # Initialize all services (this also creates the real widgets)
-            self._initialize_services()
+            # Create the session (connection, services and tree)
+            manager = create_connection_manager(username, password, ad_config)
+            self.sessions.clear()
+            self.active_session = None
+            # Widgets were removed from the DOM by a previous logout: use fresh ones
+            self.details = DetailsPane(id="details-pane")
+            self.search_results_pane = SearchResultsPane(id="search-results-pane")
+            self._register_session(ADSession(ad_config, username, manager))
 
             # Mark as logged in
             self._logged_in = True
@@ -187,12 +184,11 @@ class ADTUIServeApp(ADTUI):
         horizontal = Horizontal()
         self.mount(horizontal)
 
-        left_vertical = Vertical()
+        left_vertical = self._make_tree_column()
         right_vertical = Vertical()
         horizontal.mount(left_vertical)
         horizontal.mount(right_vertical)
 
-        left_vertical.mount(self.adtree)
         right_vertical.mount(self.details)
         right_vertical.mount(self.search_results_pane)
 
@@ -209,21 +205,22 @@ class ADTUIServeApp(ADTUI):
         # Update footer
         self._update_footer()
 
-    def _on_authentication_failure(self) -> None:
+    def _handle_session_auth_failure(self, session=None) -> None:
         """Handle authentication failure - show login again."""
+        if session is not None and len(self.sessions) > 1:
+            super()._handle_session_auth_failure(session)
+            return
         self.notify("Authentication failed. Please log in again.", severity="error")
         self._logged_in = False
         self._show_login()
 
     def action_logout(self):
         """Disconnect and return to login screen for domain switching."""
-        # Close current connection
-        if self.connection_manager:
-            try:
-                self.connection_manager.close()
-            except Exception:
-                pass
-            self.connection_manager = None
+        # Close every connection
+        for session in list(self.sessions):
+            session.close()
+        self.sessions.clear()
+        self.active_session = None
 
         self._logged_in = False
 

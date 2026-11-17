@@ -16,6 +16,31 @@ ADTree, DetailsPane, SearchResultsPane {
     height: 1fr;
 }
 
+/* One tree per connected AD, stacked; the one acted upon is highlighted */
+#tree-column {
+    height: 1fr;
+}
+
+#tree-column ADTree {
+    height: 1fr;
+}
+
+#tree-column ADTree.-multi {
+    border: round $background 80%;
+}
+
+#tree-column ADTree.-multi.-active {
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-style: bold;
+}
+
+/* Move autocomplete suggestions */
+SearchResultsPane.autocomplete {
+    border: round $accent;
+    border-title-color: $text-muted;
+}
+
 Horizontal > Vertical:first-child {
     width: 30%;
     border-right: heavy $background 80%;

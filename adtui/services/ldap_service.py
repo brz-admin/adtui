@@ -485,6 +485,29 @@ class LDAPService:
         except Exception as e:
             return []
 
+    def list_all_ou_dns(self) -> List[str]:
+        """Return the DN of every OU and container below the base DN.
+
+        Uses a paged search so domains with more than one page of OUs work.
+        Containers that are never valid move targets or noise (e.g. the
+        system/internal ones) are kept: the user may still want them.
+        """
+
+        def list_op(conn: Connection):
+            results = conn.extend.standard.paged_search(
+                self.base_dn,
+                "(|(objectClass=organizationalUnit)(objectClass=container))",
+                search_scope="SUBTREE",
+                attributes=["distinguishedName"],
+                paged_size=500,
+                generator=False,
+            )
+            return [
+                r["dn"] for r in results if r.get("type") == "searchResEntry" and r.get("dn")
+            ]
+
+        return self.connection_manager.execute_with_retry(list_op) or []
+
     def get_deleted_objects(self) -> List[Dict]:
         """Get objects from AD Recycle Bin.
 

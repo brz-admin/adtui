@@ -16,10 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 class ADTree(Tree):
-    def __init__(self, connection_manager: Optional[ConnectionManager], base_dn: str):
+    def __init__(
+        self,
+        connection_manager: Optional[ConnectionManager],
+        base_dn: str,
+        session=None,
+    ):
         super().__init__("AD Tree")
+        self.show_root = False
         self.connection_manager = connection_manager
         self.base_dn = base_dn
+        # The ADSession (AD + account) this tree belongs to
+        self.session = session
         self.loaded_ous = set()  # Track which OUs have been populated
         self.ou_cache = {}  # Cache for OU contents
         self.build_tree()

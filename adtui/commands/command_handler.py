@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 class CommandHandler:
     """Handles command parsing and execution."""
 
+    # Commands that work without a connected AD
+    NO_SESSION_COMMANDS = {
+        "help", "h", "q", "quit", "exit", "version", "v", "update",
+        "logout", "disconnect", "lo", "connect", "add", "close", "cl",
+    }
+
     def __init__(self, app: "App"):
         """Initialize command handler.
 
@@ -99,6 +105,11 @@ class CommandHandler:
             "logout": self._handle_logout,
             "disconnect": self._handle_logout,
             "lo": self._handle_logout,
+            # Multiple ADs at once
+            "connect": self._handle_connect,
+            "add": self._handle_connect,
+            "close": self._handle_close,
+            "cl": self._handle_close,
             # Version and update commands
             "version": self._handle_version,
             "v": self._handle_version,
@@ -140,6 +151,12 @@ class CommandHandler:
         # Look up and execute command
         handler = self.commands.get(command)
         if handler:
+            if command not in self.NO_SESSION_COMMANDS and not self.app.active_session:
+                self.app.notify(
+                    "Not connected to any AD (use :connect)",
+                    severity=Severity.WARNING.value,
+                )
+                return
             handler(args)
         else:
             self.app.notify(
@@ -154,7 +171,9 @@ class CommandHandler:
 
         try:
             results = self.app.ldap_service.search_objects(query)
-            self.app.search_results_pane.populate(results, self.app.connection_manager)
+            self.app.search_results_pane.populate(
+                results, self.app.connection_manager, self.app.active_session
+            )
             self.app.search_results_pane.styles.display = "block"
             # Focus the search results
             self.app.search_results_pane.focus()
@@ -190,7 +209,7 @@ class CommandHandler:
             )
             return
 
-        target_dn = self.app.path_service.path_to_dn(target_path)
+        target_dn = self._resolve_target_dn(target_path)
 
         # Validate target exists
         if not self.app.ldap_service.validate_ou_exists(target_dn):
@@ -211,6 +230,26 @@ class CommandHandler:
             ),
             self.app.handle_move_confirmation,
         )
+
+    def _resolve_target_dn(self, target: str) -> str:
+        """Turn what was typed after :move (path or DN) into a DN.
+
+        Paths are looked up in the session's OU list so that containers
+        (CN=Users...) and any OU name work, not just ``ou=`` chains.
+        """
+        target = target.strip()
+        if "=" in target and "," in target:
+            return target  # already a DN
+
+        session = self.app.active_session
+        index = session.ou_index
+        if not index.is_loaded:
+            # Typed without the autocomplete having loaded the list: load now
+            index.load(session.ldap_service.list_all_ou_dns)
+        entry = index.find(target)
+        if entry:
+            return entry.dn
+        return self.app.path_service.path_to_dn(target)
 
     def _handle_create_ou(self, ou_name: str) -> None:
         """Handle OU creation command."""
@@ -249,7 +288,7 @@ class CommandHandler:
                 # Search deleted objects matching the query
                 results = self.app.ldap_service.search_deleted_objects(query)
                 self.app.search_results_pane.populate(
-                    results, self.app.connection_manager
+                    results, self.app.connection_manager, self.app.active_session
                 )
                 self.app.search_results_pane.styles.display = "block"
                 self.app.search_results_pane.focus()
@@ -261,7 +300,7 @@ class CommandHandler:
                 # Show all deleted objects
                 results = self.app.ldap_service.get_deleted_objects()
                 self.app.search_results_pane.populate(
-                    results, self.app.connection_manager
+                    results, self.app.connection_manager, self.app.active_session
                 )
                 self.app.search_results_pane.styles.display = "block"
                 self.app.search_results_pane.focus()
@@ -840,7 +879,8 @@ class CommandHandler:
 
 [bold]Object Management:[/bold]
 :d, :del         - Delete selected object
-:m <path>        - Move to path with autocomplete
+:m <path>        - Move to OU (type to filter, ↑↓ pick,
+                   Tab complete, Enter move)
 :a, :attr        - View/edit attributes
 :l, :upn         - Edit logon name (UPN)
 :g, :groups      - Manage group memberships
@@ -866,11 +906,17 @@ class CommandHandler:
 :rs, :restore    - Restore deleted object
 :u, :undo        - Undo last operation
 
+[bold]Several ADs:[/bold]
+:connect [domain] - Log in to another AD (also: +)
+:close, :cl      - Disconnect the active AD only
+Tab              - Switch between the trees; actions use
+                   the account of the tree you are in
+
 [bold]Other:[/bold]
 :h, :help        - Show this help
 :v, :version     - Show version
 :update          - Update to latest
-:logout, :lo     - Disconnect and return to login
+:logout, :lo     - Disconnect all and return to login
 :q, :quit        - Quit application
 
 [bold]Keyboard Shortcuts:[/bold]
@@ -886,6 +932,14 @@ u - Undo       e - Enable/Disable U - Unlock
     def _handle_quit(self, args: str) -> None:
         """Handle quit command."""
         self.app.exit()
+
+    def _handle_connect(self, args: str) -> None:
+        """Handle :connect [domain] - log in to another AD without logging out."""
+        self.app.action_connect_ad(args.strip() or None)
+
+    def _handle_close(self, args: str) -> None:
+        """Handle :close - disconnect the AD of the active tree only."""
+        self.app.action_close_session()
 
     def _handle_logout(self, args: str) -> None:
         """Handle logout/disconnect command to return to login screen."""
